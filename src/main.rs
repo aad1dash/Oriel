@@ -381,6 +381,8 @@ fn evidence_packet<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{CliCommand, SearchInput, parse_command};
 
     #[test]
@@ -418,6 +420,9 @@ mod tests {
             "https://youtu.be/dQw4w9WgXcQ",
             "--language",
             "en",
+            "--cache-dir",
+            ".oriel-cache",
+            "--refresh",
             "--query",
             "evidence",
         ]
@@ -439,7 +444,7 @@ mod tests {
         };
         assert_eq!(url, "https://youtu.be/dQw4w9WgXcQ");
         assert_eq!(language.as_deref(), Some("en"));
-        assert!(cache_dir.is_none());
-        assert!(!refresh);
+        assert_eq!(cache_dir, Some(PathBuf::from(".oriel-cache")));
+        assert!(refresh);
     }
 }
