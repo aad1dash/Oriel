@@ -1,0 +1,14 @@
+# Synthetic fixture. It does not reproduce a real source.
+schema_version	1
+source_url	https://www.youtube.com/watch?v=Ori3lDemo01
+title	Building evidence-first source tools
+creator	Oriel synthetic fixture
+duration_ms	60000
+language	en
+caption_provenance	manual
+cue	0	10000	A source tool should preserve what the creator actually said before adding interpretation.
+cue	10000	20000	Every excerpt keeps its start and end timestamp, language, caption provenance and source version.
+cue	20000	30000	The first retrieval baseline uses lexical search because it is inspectable, fast and works fully offline.
+cue	30000	40000	Semantic search should be added only when an evaluation shows important paraphrased questions are being missed.
+cue	40000	50000	Visual analysis remains incomplete in this example, so the coverage record must say that clearly.
+cue	50000	60000	A calling agent receives compact evidence and performs the final reasoning without a second internal model call.
