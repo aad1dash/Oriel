@@ -1,6 +1,6 @@
 # 0001: Keep the first evidence engine in one Rust package
 
-**Status:** Accepted, 2026-08-01
+**Status:** Accepted, 2026-08-01; live-provider and hashing parts superseded by [0002](0002-live-caption-provider.md)
 
 ## Context
 
