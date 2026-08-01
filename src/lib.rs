@@ -4,3 +4,4 @@ pub mod fixture;
 pub mod provider;
 pub mod search;
 pub mod source;
+pub mod store;

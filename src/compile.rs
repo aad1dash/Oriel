@@ -40,6 +40,7 @@ pub enum CompileError {
     NoEvidence,
     TooManyCues,
     InvalidCue { index: usize, reason: &'static str },
+    InconsistentCompiledSource,
 }
 
 impl fmt::Display for CompileError {
@@ -54,6 +55,9 @@ impl fmt::Display for CompileError {
             Self::TooManyCues => formatter.write_str("source contains too many transcript cues"),
             Self::InvalidCue { index, reason } => {
                 write!(formatter, "source cue {index} {reason}")
+            }
+            Self::InconsistentCompiledSource => {
+                formatter.write_str("compiled source fields are internally inconsistent")
             }
         }
     }
@@ -94,6 +98,47 @@ pub fn compile_source(acquired: AcquiredSource) -> Result<CompiledSource, Compil
         coverage: acquired.coverage,
         acquisition: acquired.acquisition,
     })
+}
+
+/// Revalidates a compiled source loaded from an untrusted storage boundary.
+///
+/// # Errors
+///
+/// Returns [`CompileError`] when evidence identifiers, transcript provenance,
+/// validation rules or the semantic source version do not match the stored data.
+pub fn verify_compiled_source(compiled: &CompiledSource) -> Result<(), CompileError> {
+    let transcript = compiled
+        .evidence
+        .first()
+        .map(|evidence| evidence.transcript.clone())
+        .ok_or(CompileError::NoEvidence)?;
+    let mut cues = Vec::with_capacity(compiled.evidence.len());
+    for (index, evidence) in compiled.evidence.iter().enumerate() {
+        if evidence.id != format!("{}:{index}", compiled.source.source_id)
+            || evidence.transcript != transcript
+        {
+            return Err(CompileError::InconsistentCompiledSource);
+        }
+        cues.push(AcquiredCue {
+            start_ms: evidence.start_ms,
+            end_ms: evidence.end_ms,
+            text: evidence.text.clone(),
+        });
+    }
+
+    let rebuilt = compile_source(AcquiredSource {
+        source: compiled.source.clone(),
+        metadata: compiled.metadata.clone(),
+        transcript,
+        cues,
+        coverage: compiled.coverage.clone(),
+        acquisition: compiled.acquisition.clone(),
+    })?;
+    if rebuilt == *compiled {
+        Ok(())
+    } else {
+        Err(CompileError::InconsistentCompiledSource)
+    }
 }
 
 fn validate_metadata(acquired: &AcquiredSource) -> Result<(), CompileError> {
@@ -210,7 +255,9 @@ mod tests {
         source::canonicalise_source,
     };
 
-    use super::{AcquiredCue, AcquiredSource, CompileError, compile_source};
+    use super::{
+        AcquiredCue, AcquiredSource, CompileError, compile_source, verify_compiled_source,
+    };
 
     fn acquired_source() -> AcquiredSource {
         AcquiredSource {
@@ -283,5 +330,18 @@ mod tests {
             compile_source(invalid),
             Err(CompileError::InvalidCue { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_tampered_compiled_sources() {
+        let compiled = compile_source(acquired_source()).expect("source should compile");
+        verify_compiled_source(&compiled).expect("compiled source should verify");
+
+        let mut tampered = compiled;
+        tampered.evidence[0].text.push_str(" changed");
+        assert_eq!(
+            verify_compiled_source(&tampered),
+            Err(CompileError::InconsistentCompiledSource)
+        );
     }
 }
