@@ -51,6 +51,23 @@ cargo run -- search \
 
 The search command returns a compact JSON evidence packet containing source identity, coverage, acquisition and cache provenance, ranked moments, timestamps and warnings.
 
+## Use from an MCP-compatible agent
+
+Build Oriel, then configure an MCP client to launch the binary over local `stdio` with an explicit cache directory:
+
+```json
+{
+  "mcpServers": {
+    "oriel": {
+      "command": "/absolute/path/to/oriel/target/release/oriel",
+      "args": ["mcp", "--cache-dir", "/absolute/path/to/oriel-cache"]
+    }
+  }
+}
+```
+
+The initial `search_source` tool accepts a source URL, query and optional language, timestamp bounds, result limit and refresh flag. It returns the same structured evidence packet as the CLI. MCP cancellation propagates to live provider acquisition.
+
 ## Verify
 
 ```sh
@@ -67,6 +84,7 @@ Future TypeScript product surfaces use Bun. No pnpm project is present.
 - Live acquisition currently supports YouTube captions available as JSON3 through `yt-dlp`.
 - Refresh is explicit; a warm cache hit does not contact YouTube to detect changes.
 - Retrieval evaluation is still synthetic and does not establish the release recall target.
-- MCP, the web application, transcription and visual evidence are not implemented.
+- The MCP surface intentionally contains only source search; source status, reusable context packets and project-application behaviour remain to be proven through real agent use.
+- The web application, transcription and visual evidence are not implemented.
 
 The founding product brief is in [`plans/spec1.md`](plans/spec1.md). Current implementation state is in [`status.md`](status.md).
