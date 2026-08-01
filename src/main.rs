@@ -1,13 +1,15 @@
 use std::{env, error::Error, fmt, fs, path::PathBuf, process::ExitCode};
 
 use oriel::{
-    evidence::{CaptionProvenance, CompiledSource},
+    evidence::{AcquisitionProvenance, CaptionProvenance, Coverage, SourceMetadata},
     fixture::compile_fixture,
-    search::{SearchQuery, search},
-    source::{CanonicalSource, SourceProvider, canonicalise_source},
+    provider::ytdlp::YtDlpProvider,
+    search::{RetrievedEvidence, SearchQuery, search},
+    source::{CanonicalSource, canonicalise_source},
 };
+use serde::Serialize;
 
-const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search --fixture <path> --query <text> [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]";
+const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]";
 
 #[derive(Debug)]
 enum CliError {
@@ -21,6 +23,7 @@ enum CliError {
         error: std::io::Error,
     },
     Engine(Box<dyn Error>),
+    Serialise(serde_json::Error),
 }
 
 impl fmt::Display for CliError {
@@ -38,6 +41,9 @@ impl fmt::Display for CliError {
                 )
             }
             Self::Engine(error) => error.fmt(formatter),
+            Self::Serialise(error) => {
+                write!(formatter, "could not serialise engine output: {error}")
+            }
         }
     }
 }
@@ -47,9 +53,43 @@ impl Error for CliError {}
 enum CliCommand {
     Resolve(String),
     Search {
-        fixture: PathBuf,
+        input: SearchInput,
         query: SearchQuery,
     },
+}
+
+enum SearchInput {
+    Fixture(PathBuf),
+    LiveSource {
+        url: String,
+        language: Option<String>,
+    },
+}
+
+#[derive(Serialize)]
+struct EvidencePacket<'a> {
+    source: &'a CanonicalSource,
+    source_version: &'a str,
+    metadata: &'a SourceMetadata,
+    coverage: &'a Coverage,
+    acquisition: &'a AcquisitionProvenance,
+    query: &'a str,
+    moments: Vec<EvidenceMoment<'a>>,
+    warnings: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct EvidenceMoment<'a> {
+    id: &'a str,
+    start_ms: u64,
+    end_ms: u64,
+    timestamp_url: String,
+    excerpt: &'a str,
+    evidence_kind: &'static str,
+    language: &'a str,
+    caption_provenance: &'a CaptionProvenance,
+    score: u32,
+    matched_terms: &'a [String],
 }
 
 fn main() -> ExitCode {
@@ -66,18 +106,30 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
     match parse_command(args)? {
         CliCommand::Resolve(input) => {
             let source = canonicalise_source(&input).map_err(engine_error)?;
-            println!("{}", source_json(&source));
+            print_json(&source)?;
         }
-        CliCommand::Search { fixture, query } => {
-            let input = fs::read_to_string(&fixture).map_err(|error| CliError::ReadFixture {
-                path: fixture,
-                error,
-            })?;
-            let compiled = compile_fixture(&input).map_err(engine_error)?;
+        CliCommand::Search { input, query } => {
+            let compiled = match input {
+                SearchInput::Fixture(path) => {
+                    let fixture = fs::read_to_string(&path)
+                        .map_err(|error| CliError::ReadFixture { path, error })?;
+                    compile_fixture(&fixture).map_err(engine_error)?
+                }
+                SearchInput::LiveSource { url, language } => YtDlpProvider::default()
+                    .ingest(&url, language.as_deref())
+                    .map_err(engine_error)?,
+            };
             let results = search(&compiled, &query).map_err(engine_error)?;
-            println!("{}", evidence_packet_json(&compiled, &query, &results));
+            let packet = evidence_packet(&compiled, &query, &results);
+            print_json(&packet)?;
         }
     }
+    Ok(())
+}
+
+fn print_json(value: &impl Serialize) -> Result<(), CliError> {
+    let output = serde_json::to_string(value).map_err(CliError::Serialise)?;
+    println!("{output}");
     Ok(())
 }
 
@@ -108,6 +160,8 @@ fn parse_resolve(mut args: impl Iterator<Item = String>) -> Result<CliCommand, C
 
 fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, CliError> {
     let mut fixture = None;
+    let mut source = None;
+    let mut language = None;
     let mut query = None;
     let mut limit = None;
     let mut start_ms = None;
@@ -119,6 +173,8 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
             .ok_or_else(|| CliError::Usage(format!("{flag} requires a value")))?;
         match flag.as_str() {
             "--fixture" => set_once(&mut fixture, PathBuf::from(value), &flag)?,
+            "--source" => set_once(&mut source, value, &flag)?,
+            "--language" => set_once(&mut language, value, &flag)?,
             "--query" => set_once(&mut query, value, &flag)?,
             "--limit" => {
                 let parsed = parse_number(&flag, &value)?;
@@ -136,7 +192,27 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
         }
     }
 
-    let fixture = fixture.ok_or_else(|| CliError::Usage("search requires --fixture".to_owned()))?;
+    let input = match (fixture, source) {
+        (Some(path), None) => {
+            if language.is_some() {
+                return Err(CliError::Usage(
+                    "--language is only valid with --source".to_owned(),
+                ));
+            }
+            SearchInput::Fixture(path)
+        }
+        (None, Some(url)) => SearchInput::LiveSource { url, language },
+        (Some(_), Some(_)) => {
+            return Err(CliError::Usage(
+                "search accepts either --fixture or --source, not both".to_owned(),
+            ));
+        }
+        (None, None) => {
+            return Err(CliError::Usage(
+                "search requires either --fixture or --source".to_owned(),
+            ));
+        }
+    };
     let query_text = query.ok_or_else(|| CliError::Usage("search requires --query".to_owned()))?;
     let mut query = SearchQuery::new(query_text);
     if let Some(limit) = limit {
@@ -145,7 +221,7 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
     query.start_ms = start_ms;
     query.end_ms = end_ms;
 
-    Ok(CliCommand::Search { fixture, query })
+    Ok(CliCommand::Search { input, query })
 }
 
 fn set_once<T>(target: &mut Option<T>, value: T, flag: &str) -> Result<(), CliError> {
@@ -166,129 +242,56 @@ where
     })
 }
 
-fn source_json(source: &CanonicalSource) -> String {
-    format!(
-        "{{\"provider\":\"{}\",\"source_id\":\"{}\",\"canonical_url\":\"{}\"}}",
-        provider_name(&source.provider),
-        json_string(&source.source_id),
-        json_string(&source.canonical_url)
-    )
-}
-
-fn evidence_packet_json(
-    compiled: &CompiledSource,
-    query: &SearchQuery,
-    results: &[oriel::search::RetrievedEvidence<'_>],
-) -> String {
+fn evidence_packet<'a>(
+    compiled: &'a oriel::evidence::CompiledSource,
+    query: &'a SearchQuery,
+    results: &'a [RetrievedEvidence<'a>],
+) -> EvidencePacket<'a> {
     let moments = results
         .iter()
-        .map(|result| {
-            let evidence = result.evidence;
-            let matched_terms = result
-                .matched_terms
-                .iter()
-                .map(|term| format!("\"{}\"", json_string(term)))
-                .collect::<Vec<_>>()
-                .join(",");
-            let timestamp_url = format!(
+        .map(|result| EvidenceMoment {
+            id: &result.evidence.id,
+            start_ms: result.evidence.start_ms,
+            end_ms: result.evidence.end_ms,
+            timestamp_url: format!(
                 "{}&t={}s",
                 compiled.source.canonical_url,
-                evidence.start_ms / 1_000
-            );
-            format!(
-                concat!(
-                    "{{\"id\":\"{}\",\"start_ms\":{},\"end_ms\":{},",
-                    "\"timestamp_url\":\"{}\",\"excerpt\":\"{}\",",
-                    "\"evidence_kind\":\"transcript\",\"language\":\"{}\",",
-                    "\"caption_provenance\":\"{}\",\"score\":{},\"matched_terms\":[{}]}}"
-                ),
-                json_string(&evidence.id),
-                evidence.start_ms,
-                evidence.end_ms,
-                json_string(&timestamp_url),
-                json_string(&evidence.text),
-                json_string(&evidence.transcript.language),
-                caption_provenance_name(&evidence.transcript.captions),
-                result.score,
-                matched_terms
-            )
+                result.evidence.start_ms / 1_000
+            ),
+            excerpt: &result.evidence.text,
+            evidence_kind: "transcript",
+            language: &result.evidence.transcript.language,
+            caption_provenance: &result.evidence.transcript.captions,
+            score: result.score,
+            matched_terms: &result.matched_terms,
         })
-        .collect::<Vec<_>>()
-        .join(",");
-    let warning = if compiled.coverage.visuals_processed {
-        "[]"
-    } else {
-        "[\"visuals_not_processed\"]"
-    };
+        .collect();
+    let mut warnings = Vec::new();
+    if !compiled.coverage.transcript_complete {
+        warnings.push("transcript_incomplete");
+    }
+    if !compiled.coverage.visuals_processed {
+        warnings.push("visuals_not_processed");
+    }
 
-    format!(
-        concat!(
-            "{{\"source\":{},\"source_version\":\"{}\",",
-            "\"metadata\":{{\"title\":\"{}\",\"creator\":\"{}\",\"duration_ms\":{}}},",
-            "\"coverage\":{{\"metadata\":{},\"transcript_start_ms\":{},",
-            "\"transcript_end_ms\":{},\"transcript_complete\":{},\"visuals_processed\":{}}},",
-            "\"query\":\"{}\",\"moments\":[{}],\"warnings\":{}}}"
-        ),
-        source_json(&compiled.source),
-        json_string(&compiled.source_version),
-        json_string(&compiled.metadata.title),
-        json_string(&compiled.metadata.creator),
-        compiled.metadata.duration_ms,
-        compiled.coverage.metadata,
-        compiled.coverage.transcript_start_ms,
-        compiled.coverage.transcript_end_ms,
-        compiled.coverage.transcript_complete,
-        compiled.coverage.visuals_processed,
-        json_string(&query.text),
+    EvidencePacket {
+        source: &compiled.source,
+        source_version: &compiled.source_version,
+        metadata: &compiled.metadata,
+        coverage: &compiled.coverage,
+        acquisition: &compiled.acquisition,
+        query: &query.text,
         moments,
-        warning
-    )
-}
-
-fn provider_name(provider: &SourceProvider) -> &'static str {
-    match provider {
-        SourceProvider::YouTube => "youtube",
+        warnings,
     }
-}
-
-fn caption_provenance_name(provenance: &CaptionProvenance) -> &'static str {
-    match provenance {
-        CaptionProvenance::Manual => "manual",
-        CaptionProvenance::Generated => "generated",
-        CaptionProvenance::LocalTranscription => "local_transcription",
-    }
-}
-
-fn json_string(input: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut escaped = String::with_capacity(input.len());
-    for character in input.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\u{08}' => escaped.push_str("\\b"),
-            '\u{0c}' => escaped.push_str("\\f"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            control if control <= '\u{1f}' => {
-                let value = control as usize;
-                escaped.push_str("\\u00");
-                escaped.push(char::from(HEX[value >> 4]));
-                escaped.push(char::from(HEX[value & 0x0f]));
-            }
-            other => escaped.push(other),
-        }
-    }
-    escaped
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CliCommand, json_string, parse_command};
+    use super::{CliCommand, SearchInput, parse_command};
 
     #[test]
-    fn parses_search_arguments_in_any_order() {
+    fn parses_fixture_search_arguments_in_any_order() {
         let args = [
             "search",
             "--query",
@@ -301,18 +304,41 @@ mod tests {
         .into_iter()
         .map(str::to_owned);
 
-        let CliCommand::Search { fixture, query } =
+        let CliCommand::Search { input, query } =
             parse_command(args).expect("arguments should parse")
         else {
             panic!("expected search command");
         };
-        assert_eq!(fixture.to_string_lossy(), "source.tsv");
+        let SearchInput::Fixture(path) = input else {
+            panic!("expected fixture input");
+        };
+        assert_eq!(path.to_string_lossy(), "source.tsv");
         assert_eq!(query.text, "cache invalidation");
         assert_eq!(query.limit, 3);
     }
 
     #[test]
-    fn escapes_json_control_characters() {
-        assert_eq!(json_string("a\n\"b\\c\u{01}"), "a\\n\\\"b\\\\c\\u0001");
+    fn parses_live_source_and_language() {
+        let args = [
+            "search",
+            "--source",
+            "https://youtu.be/dQw4w9WgXcQ",
+            "--language",
+            "en",
+            "--query",
+            "evidence",
+        ]
+        .into_iter()
+        .map(str::to_owned);
+
+        let CliCommand::Search { input, .. } = parse_command(args).expect("arguments should parse")
+        else {
+            panic!("expected search command");
+        };
+        let SearchInput::LiveSource { url, language } = input else {
+            panic!("expected live source input");
+        };
+        assert_eq!(url, "https://youtu.be/dQw4w9WgXcQ");
+        assert_eq!(language.as_deref(), Some("en"));
     }
 }
