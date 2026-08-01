@@ -1,8 +1,10 @@
 use std::{error::Error, fmt};
 
 use crate::{
+    compile::{AcquiredCue, AcquiredSource, CompileError, compile_source},
     evidence::{
-        CaptionProvenance, CompiledSource, Coverage, Evidence, SourceMetadata, TranscriptProvenance,
+        AcquisitionProvenance, CaptionProvenance, CompiledSource, Coverage, SourceMetadata,
+        TranscriptProvenance,
     },
     source::{SourceError, canonicalise_source},
 };
@@ -20,6 +22,7 @@ pub enum FixtureError {
     InvalidCaptionProvenance(String),
     InvalidSource(SourceError),
     InvalidCue { line: usize, reason: &'static str },
+    InvalidCompiledSource(CompileError),
     NoEvidence,
 }
 
@@ -49,6 +52,9 @@ impl fmt::Display for FixtureError {
             Self::InvalidSource(error) => write!(formatter, "fixture source is invalid: {error}"),
             Self::InvalidCue { line, reason } => {
                 write!(formatter, "fixture cue on line {line} {reason}")
+            }
+            Self::InvalidCompiledSource(error) => {
+                write!(formatter, "fixture evidence is invalid: {error}")
             }
             Self::NoEvidence => formatter.write_str("fixture contains no caption evidence"),
         }
@@ -225,34 +231,30 @@ fn build_fixture(raw: RawFixture) -> Result<CompiledSource, FixtureError> {
         return Err(FixtureError::NoEvidence);
     }
 
-    let transcript = TranscriptProvenance { language, captions };
     let mut previous_start = None;
-    let mut evidence = Vec::with_capacity(raw.cues.len());
-    for (index, cue) in raw.cues.into_iter().enumerate() {
+    let mut cues = Vec::with_capacity(raw.cues.len());
+    for cue in raw.cues {
         validate_cue(&cue, previous_start, duration_ms)?;
         previous_start = Some(cue.start_ms);
-        evidence.push(Evidence {
-            id: format!("{}:{index}", source.source_id),
+        cues.push(AcquiredCue {
             start_ms: cue.start_ms,
             end_ms: cue.end_ms,
             text: cue.text,
-            transcript: transcript.clone(),
         });
     }
 
-    let transcript_start_ms = evidence.first().map_or(0, |cue| cue.start_ms);
-    let transcript_end_ms = evidence.last().map_or(0, |cue| cue.end_ms);
-    let source_version = fixture_version(&source.source_id, &evidence);
+    let transcript_start_ms = cues.first().map_or(0, |cue| cue.start_ms);
+    let transcript_end_ms = cues.last().map_or(0, |cue| cue.end_ms);
 
-    Ok(CompiledSource {
+    compile_source(AcquiredSource {
         source,
-        source_version,
         metadata: SourceMetadata {
             title,
             creator,
             duration_ms,
         },
-        evidence,
+        transcript: TranscriptProvenance { language, captions },
+        cues,
         coverage: Coverage {
             metadata: true,
             transcript_start_ms,
@@ -260,7 +262,13 @@ fn build_fixture(raw: RawFixture) -> Result<CompiledSource, FixtureError> {
             transcript_complete: transcript_start_ms == 0 && transcript_end_ms == duration_ms,
             visuals_processed: false,
         },
+        acquisition: AcquisitionProvenance {
+            adapter: "fixture".to_owned(),
+            source_format: "oriel_fixture_tsv_v1".to_owned(),
+            tool: None,
+        },
     })
+    .map_err(FixtureError::InvalidCompiledSource)
 }
 
 fn required(value: Option<String>, field: &'static str) -> Result<String, FixtureError> {
@@ -302,22 +310,6 @@ fn validate_cue(
     Ok(())
 }
 
-fn fixture_version(source_id: &str, evidence: &[Evidence]) -> String {
-    // FNV-1a is sufficient for deterministic fixtures, but not the future live-source cache.
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in source_id.bytes().chain(evidence.iter().flat_map(|cue| {
-        cue.start_ms
-            .to_le_bytes()
-            .into_iter()
-            .chain(cue.end_ms.to_le_bytes())
-            .chain(cue.text.bytes())
-    })) {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("fixture-fnv1a64:{hash:016x}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{FixtureError, compile_fixture};
@@ -347,7 +339,7 @@ cue\t5000\t10000\tInterpretation must remain separate.\n";
         );
         assert!(compiled.coverage.transcript_complete);
         assert!(!compiled.coverage.visuals_processed);
-        assert!(compiled.source_version.starts_with("fixture-fnv1a64:"));
+        assert!(compiled.source_version.starts_with("source-v1:sha256:"));
     }
 
     #[test]

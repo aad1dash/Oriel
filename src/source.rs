@@ -1,13 +1,16 @@
 use std::{error::Error, fmt};
 
+use serde::{Deserialize, Serialize};
+
 const YOUTUBE_ID_LENGTH: usize = 11;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum SourceProvider {
+    #[serde(rename = "youtube")]
     YouTube,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CanonicalSource {
     pub provider: SourceProvider,
     pub source_id: String,
@@ -146,6 +149,14 @@ mod tests {
         );
         assert_eq!(
             canonicalise_source("file:///tmp/video"),
+            Err(SourceError::UnsupportedSource)
+        );
+        assert_eq!(
+            canonicalise_source("https://user@youtube.com/watch?v=dQw4w9WgXcQ"),
+            Err(SourceError::UnsupportedSource)
+        );
+        assert_eq!(
+            canonicalise_source("https://youtube.com:444/watch?v=dQw4w9WgXcQ"),
             Err(SourceError::UnsupportedSource)
         );
     }
