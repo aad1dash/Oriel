@@ -1,16 +1,15 @@
 use std::{env, error::Error, fmt, fs, path::PathBuf, process::ExitCode};
 
 use oriel::{
-    evidence::{AcquisitionProvenance, CaptionProvenance, Coverage, SourceMetadata},
+    engine::{CacheReport, CacheStatus, SourceEngine, evidence_packet},
     fixture::compile_fixture,
-    provider::ytdlp::YtDlpProvider,
-    search::{RetrievedEvidence, SearchQuery, search},
-    source::{CanonicalSource, canonicalise_source},
-    store::FileSourceStore,
+    provider::ytdlp::AcquisitionControl,
+    search::SearchQuery,
+    source::canonicalise_source,
 };
 use serde::Serialize;
 
-const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--cache-dir <path>] [--refresh] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]";
+const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--cache-dir <path>] [--refresh] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]\n  oriel mcp --cache-dir <path>";
 
 #[derive(Debug)]
 enum CliError {
@@ -24,6 +23,7 @@ enum CliError {
         error: std::io::Error,
     },
     Engine(Box<dyn Error>),
+    Mcp(String),
     Serialise(serde_json::Error),
 }
 
@@ -42,6 +42,7 @@ impl fmt::Display for CliError {
                 )
             }
             Self::Engine(error) => error.fmt(formatter),
+            Self::Mcp(message) => formatter.write_str(message),
             Self::Serialise(error) => {
                 write!(formatter, "could not serialise engine output: {error}")
             }
@@ -53,6 +54,9 @@ impl Error for CliError {}
 
 enum CliCommand {
     Resolve(String),
+    Mcp {
+        cache_dir: PathBuf,
+    },
     Search {
         input: SearchInput,
         query: SearchQuery,
@@ -67,39 +71,6 @@ enum SearchInput {
         cache_dir: Option<PathBuf>,
         refresh: bool,
     },
-}
-
-#[derive(Serialize)]
-struct EvidencePacket<'a> {
-    source: &'a CanonicalSource,
-    source_version: &'a str,
-    metadata: &'a SourceMetadata,
-    coverage: &'a Coverage,
-    acquisition: &'a AcquisitionProvenance,
-    cache: CacheReport,
-    query: &'a str,
-    moments: Vec<EvidenceMoment<'a>>,
-    warnings: Vec<&'static str>,
-}
-
-#[derive(Serialize)]
-struct CacheReport {
-    status: &'static str,
-    source_changed: Option<bool>,
-}
-
-#[derive(Serialize)]
-struct EvidenceMoment<'a> {
-    id: &'a str,
-    start_ms: u64,
-    end_ms: u64,
-    timestamp_url: String,
-    excerpt: &'a str,
-    evidence_kind: &'static str,
-    language: &'a str,
-    caption_provenance: &'a CaptionProvenance,
-    score: u32,
-    matched_terms: &'a [String],
 }
 
 fn main() -> ExitCode {
@@ -118,78 +89,45 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
             let source = canonicalise_source(&input).map_err(engine_error)?;
             print_json(&source)?;
         }
+        CliCommand::Mcp { cache_dir } => {
+            let runtime = tokio::runtime::Runtime::new().map_err(|error| {
+                CliError::Mcp(format!("starting the MCP runtime failed: {error}"))
+            })?;
+            runtime
+                .block_on(oriel::mcp::serve_stdio(cache_dir))
+                .map_err(CliError::Mcp)?;
+        }
         CliCommand::Search { input, query } => {
-            let (compiled, cache) = match input {
+            let packet = match input {
                 SearchInput::Fixture(path) => {
                     let fixture = fs::read_to_string(&path)
                         .map_err(|error| CliError::ReadFixture { path, error })?;
-                    (
-                        compile_fixture(&fixture).map_err(engine_error)?,
+                    let compiled = compile_fixture(&fixture).map_err(engine_error)?;
+                    evidence_packet(
+                        &compiled,
+                        &query,
                         CacheReport {
-                            status: "fixture",
+                            status: CacheStatus::Fixture,
                             source_changed: None,
                         },
                     )
+                    .map_err(engine_error)?
                 }
                 SearchInput::LiveSource {
                     url,
                     language,
                     cache_dir,
                     refresh,
-                } => {
-                    let source = canonicalise_source(&url).map_err(engine_error)?;
-                    let store = cache_dir.map(FileSourceStore::new);
-                    let previous = if let Some(store) = &store {
-                        store
-                            .load_latest(&source, language.as_deref())
-                            .map_err(engine_error)?
-                    } else {
-                        None
-                    };
-                    if !refresh && previous.is_some() {
-                        let cached = previous.ok_or_else(|| {
-                            CliError::Usage("cache state changed unexpectedly".to_owned())
-                        })?;
-                        (
-                            cached,
-                            CacheReport {
-                                status: "hit",
-                                source_changed: None,
-                            },
-                        )
-                    } else {
-                        let acquired = YtDlpProvider::default()
-                            .ingest(&url, language.as_deref())
-                            .map_err(engine_error)?;
-                        if let Some(store) = &store {
-                            store
-                                .save(&acquired, language.is_none())
-                                .map_err(engine_error)?;
-                        }
-                        let cache = if store.is_none() {
-                            CacheReport {
-                                status: "disabled",
-                                source_changed: None,
-                            }
-                        } else if refresh {
-                            CacheReport {
-                                status: "refreshed",
-                                source_changed: previous
-                                    .as_ref()
-                                    .map(|cached| cached.source_version != acquired.source_version),
-                            }
-                        } else {
-                            CacheReport {
-                                status: "miss",
-                                source_changed: None,
-                            }
-                        };
-                        (acquired, cache)
-                    }
-                }
+                } => SourceEngine::new(cache_dir)
+                    .search_source(
+                        &url,
+                        language.as_deref(),
+                        refresh,
+                        &query,
+                        &AcquisitionControl::default(),
+                    )
+                    .map_err(engine_error)?,
             };
-            let results = search(&compiled, &query).map_err(engine_error)?;
-            let packet = evidence_packet(&compiled, &query, &results, cache);
             print_json(&packet)?;
         }
     }
@@ -210,9 +148,29 @@ fn parse_command(mut args: impl Iterator<Item = String>) -> Result<CliCommand, C
     match args.next().as_deref() {
         Some("resolve") => parse_resolve(args),
         Some("search") => parse_search(args),
+        Some("mcp") => parse_mcp(args),
         Some(command) => Err(CliError::Usage(format!("unknown command '{command}'"))),
         None => Err(CliError::Usage("a command is required".to_owned())),
     }
+}
+
+fn parse_mcp(mut args: impl Iterator<Item = String>) -> Result<CliCommand, CliError> {
+    if args.next().as_deref() != Some("--cache-dir") {
+        return Err(CliError::Usage(
+            "mcp requires --cache-dir followed by an explicit storage path".to_owned(),
+        ));
+    }
+    let cache_dir = args
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::Usage("--cache-dir requires a path".to_owned()))?;
+    if args.next().is_some() {
+        return Err(CliError::Usage(
+            "mcp accepts only one --cache-dir path".to_owned(),
+        ));
+    }
+    Ok(CliCommand::Mcp { cache_dir })
 }
 
 fn parse_resolve(mut args: impl Iterator<Item = String>) -> Result<CliCommand, CliError> {
@@ -333,52 +291,6 @@ where
     })
 }
 
-fn evidence_packet<'a>(
-    compiled: &'a oriel::evidence::CompiledSource,
-    query: &'a SearchQuery,
-    results: &'a [RetrievedEvidence<'a>],
-    cache: CacheReport,
-) -> EvidencePacket<'a> {
-    let moments = results
-        .iter()
-        .map(|result| EvidenceMoment {
-            id: &result.evidence.id,
-            start_ms: result.evidence.start_ms,
-            end_ms: result.evidence.end_ms,
-            timestamp_url: format!(
-                "{}&t={}s",
-                compiled.source.canonical_url,
-                result.evidence.start_ms / 1_000
-            ),
-            excerpt: &result.evidence.text,
-            evidence_kind: "transcript",
-            language: &result.evidence.transcript.language,
-            caption_provenance: &result.evidence.transcript.captions,
-            score: result.score,
-            matched_terms: &result.matched_terms,
-        })
-        .collect();
-    let mut warnings = Vec::new();
-    if !compiled.coverage.transcript_complete {
-        warnings.push("transcript_incomplete");
-    }
-    if !compiled.coverage.visuals_processed {
-        warnings.push("visuals_not_processed");
-    }
-
-    EvidencePacket {
-        source: &compiled.source,
-        source_version: &compiled.source_version,
-        metadata: &compiled.metadata,
-        coverage: &compiled.coverage,
-        acquisition: &compiled.acquisition,
-        cache,
-        query: &query.text,
-        moments,
-        warnings,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -446,5 +358,21 @@ mod tests {
         assert_eq!(language.as_deref(), Some("en"));
         assert_eq!(cache_dir, Some(PathBuf::from(".oriel-cache")));
         assert!(refresh);
+    }
+
+    #[test]
+    fn mcp_requires_an_explicit_cache_directory() {
+        let args = ["mcp", "--cache-dir", ".oriel-cache"]
+            .into_iter()
+            .map(str::to_owned);
+        let CliCommand::Mcp { cache_dir } =
+            parse_command(args).expect("MCP arguments should parse")
+        else {
+            panic!("expected MCP command");
+        };
+        assert_eq!(cache_dir, PathBuf::from(".oriel-cache"));
+
+        let missing = ["mcp"].into_iter().map(str::to_owned);
+        assert!(parse_command(missing).is_err());
     }
 }

@@ -1,6 +1,8 @@
 pub mod compile;
+pub mod engine;
 pub mod evidence;
 pub mod fixture;
+pub mod mcp;
 pub mod provider;
 pub mod search;
 pub mod source;
