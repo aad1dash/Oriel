@@ -1,0 +1,6 @@
+# Synthetic retrieval evaluation. expected_start_ms is "absent" for a negative question.
+direct_lexical	lexical retrieval baseline	20000
+natural_question	Why does retrieval begin with lexical search?	20000
+find_moment	Where is incomplete visual coverage stated?	40000
+provenance	Which details are preserved for every excerpt?	10000
+negative	Which graph database does the source recommend?	absent

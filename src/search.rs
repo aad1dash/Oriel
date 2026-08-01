@@ -103,7 +103,8 @@ fn rank_evidence<'a>(
         }
     }
 
-    if matched_terms.is_empty() {
+    let minimum_matches = query_terms.len().div_ceil(3).max(1);
+    if matched_terms.len() < minimum_matches {
         return None;
     }
     if matched_terms.len() == query_terms.len() {
