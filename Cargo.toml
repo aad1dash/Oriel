@@ -18,3 +18,7 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+
+[[bench]]
+name = "retrieval_latency"
+harness = false
