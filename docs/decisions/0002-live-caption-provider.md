@@ -24,6 +24,8 @@ The adapter:
 - verifies returned source identity;
 - minimises raw metadata immediately and never persists signed caption URLs;
 - uses a private temporary directory and reports cleanup failure;
+- gives each provider stage a 90-second deadline and supports caller cancellation;
+- terminates and reaps a timed-out or cancelled provider process before cleanup;
 - records tool, format, language and caption provenance separately from source evidence.
 
 Both fixtures and live acquisition now enter the same pure compiler. The compiler validates evidence and produces a framed SHA-256 semantic version. Tool version, temporary paths and signed URLs do not invalidate equivalent evidence.
@@ -38,6 +40,7 @@ Persist compiled sources as schema-versioned, content-addressed JSON. Version fi
 - An explicit reacquisition of unchanged evidence reported `refreshed` with `source_changed: false`.
 - Cache version and pointer directories were mode `0700` in the smoke run.
 - Strict Clippy and all default offline tests pass; live access is not part of the default test suite.
+- Deterministic process tests verify that timeout and cancellation terminate and reap a stalled child in under one second.
 - The [official yt-dlp options](https://github.com/yt-dlp/yt-dlp/blob/master/README.md) distinguish manual and generated captions and support related-file acquisition without media.
 
 ## Alternatives
@@ -63,13 +66,13 @@ Not required for current latency. An optimised synthetic benchmark over 10,000 c
 - `yt-dlp` and a supported JavaScript runtime are required for live YouTube use but not for cached or fixture-backed retrieval.
 - JSON3 is provider input, not an engine-wide format contract.
 - Refresh reacquires the source; ordinary cache hits deliberately make no network request.
-- The initial process adapter has bounded files but no timeout or cancellation yet.
+- Provider cancellation is available at the engine boundary; the current one-shot CLI relies on the default deadline rather than exposing an interactive cancel control.
 - Transcript-neutral video edits cannot be detected until visual evidence exists.
 - Source and caption rights remain separate from the yt-dlp software licence.
 
 ## Revisit when
 
-- provider timeouts or cancellation become necessary for real long-running sources;
+- a provider demonstrably launches descendant processes that require process-group termination;
 - JSON3 becomes unavailable or demonstrates evidence-loss cases;
 - an authorised evaluation corpus shows lexical recall failures;
 - measured warm retrieval p95 approaches 100 milliseconds;

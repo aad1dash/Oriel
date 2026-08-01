@@ -39,6 +39,8 @@ cargo run -- search \
 
 The cache stores content-addressed, schema-versioned JSON. It does not retain raw metadata, signed caption URLs, audio or video.
 
+Each provider stage has a 90-second deadline. The engine also exposes a cancellation token for future long-running surfaces; either condition terminates and reaps the provider process before temporary files are removed.
+
 The deterministic fixture path remains available offline:
 
 ```sh
@@ -63,7 +65,6 @@ Future TypeScript product surfaces use Bun. No pnpm project is present.
 ## Current limitations
 
 - Live acquisition currently supports YouTube captions available as JSON3 through `yt-dlp`.
-- Provider timeout and cancellation are not implemented yet.
 - Refresh is explicit; a warm cache hit does not contact YouTube to detect changes.
 - Retrieval evaluation is still synthetic and does not establish the release recall target.
 - MCP, the web application, transcription and visual evidence are not implemented.

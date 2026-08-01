@@ -11,12 +11,14 @@
 - The CLI accepts a live URL or fixture and returns compact evidence packets with clickable timestamps.
 - An explicit local cache stores immutable, inspectable JSON versions and serves repeated questions without provider access.
 - `--refresh` reacquires a cached source and reports whether compiled evidence changed.
+- Every provider stage has a 90-second deadline and a caller can cancel acquisition; either path terminates and reaps the child process before cleanup.
 
 ## Evidence
 
 - Rust 1.97.1; Bun 1.3.14 reserved for future TypeScript surfaces; `yt-dlp 2026.07.04` locally verified.
 - Formatting and strict Clippy pass.
-- 30 tests pass offline; live access is excluded from defaults.
+- 32 tests pass offline; live access is excluded from defaults.
+- Deterministic timeout and cancellation tests terminate a five-second child in under one second.
 - Synthetic retrieval corpus: 5/5 expected outcomes in the top five, including one negative case. This is infrastructure proof, not the product recall claim.
 - Bounded live smoke: URL → manual English captions → expected evidence at 22.64 seconds; no media downloaded.
 - Cache smoke: first request `miss`; identical network-restricted request `hit`; private directories were mode `0700`.
@@ -25,13 +27,13 @@
 
 ## Not yet supported
 
-- Provider timeout and cancellation; authenticated, private, live or age-restricted sources.
+- Authenticated, private, live or age-restricted sources.
 - Representative authorised retrieval corpus and the 90% recall claim.
 - Progressive acquisition status, MCP, web, local transcription or visual evidence.
 - Automatic change checks on warm hits; refresh is explicit.
 
 ## Next
 
-Build a representative authorised retrieval corpus and test segmentation/recall before adding an index. In parallel, add provider timeout and cancellation before exposing ingestion through a long-running server.
+Build a representative authorised retrieval corpus and test segmentation/recall before adding an index. Then expose the proven engine through a thin local MCP surface.
 
 No interface design has been selected. Web design requires founder consultation, external Claude Opus work and served HTML directions before implementation.
