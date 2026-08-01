@@ -6,10 +6,11 @@ use oriel::{
     provider::ytdlp::YtDlpProvider,
     search::{RetrievedEvidence, SearchQuery, search},
     source::{CanonicalSource, canonicalise_source},
+    store::FileSourceStore,
 };
 use serde::Serialize;
 
-const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]";
+const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--cache-dir <path>] [--refresh] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]";
 
 #[derive(Debug)]
 enum CliError {
@@ -63,6 +64,8 @@ enum SearchInput {
     LiveSource {
         url: String,
         language: Option<String>,
+        cache_dir: Option<PathBuf>,
+        refresh: bool,
     },
 }
 
@@ -73,9 +76,15 @@ struct EvidencePacket<'a> {
     metadata: &'a SourceMetadata,
     coverage: &'a Coverage,
     acquisition: &'a AcquisitionProvenance,
+    cache: CacheReport,
     query: &'a str,
     moments: Vec<EvidenceMoment<'a>>,
     warnings: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct CacheReport {
+    status: &'static str,
 }
 
 #[derive(Serialize)]
@@ -109,18 +118,53 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
             print_json(&source)?;
         }
         CliCommand::Search { input, query } => {
-            let compiled = match input {
+            let (compiled, cache_status) = match input {
                 SearchInput::Fixture(path) => {
                     let fixture = fs::read_to_string(&path)
                         .map_err(|error| CliError::ReadFixture { path, error })?;
-                    compile_fixture(&fixture).map_err(engine_error)?
+                    (compile_fixture(&fixture).map_err(engine_error)?, "fixture")
                 }
-                SearchInput::LiveSource { url, language } => YtDlpProvider::default()
-                    .ingest(&url, language.as_deref())
-                    .map_err(engine_error)?,
+                SearchInput::LiveSource {
+                    url,
+                    language,
+                    cache_dir,
+                    refresh,
+                } => {
+                    let source = canonicalise_source(&url).map_err(engine_error)?;
+                    let store = cache_dir.map(FileSourceStore::new);
+                    let cached = if refresh {
+                        None
+                    } else if let Some(store) = &store {
+                        store
+                            .load_latest(&source, language.as_deref())
+                            .map_err(engine_error)?
+                    } else {
+                        None
+                    };
+                    if let Some(cached) = cached {
+                        (cached, "hit")
+                    } else {
+                        let acquired = YtDlpProvider::default()
+                            .ingest(&url, language.as_deref())
+                            .map_err(engine_error)?;
+                        if let Some(store) = &store {
+                            store
+                                .save(&acquired, language.is_none())
+                                .map_err(engine_error)?;
+                        }
+                        let status = if store.is_none() {
+                            "disabled"
+                        } else if refresh {
+                            "refreshed"
+                        } else {
+                            "miss"
+                        };
+                        (acquired, status)
+                    }
+                }
             };
             let results = search(&compiled, &query).map_err(engine_error)?;
-            let packet = evidence_packet(&compiled, &query, &results);
+            let packet = evidence_packet(&compiled, &query, &results, cache_status);
             print_json(&packet)?;
         }
     }
@@ -162,12 +206,23 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
     let mut fixture = None;
     let mut source = None;
     let mut language = None;
+    let mut cache_dir = None;
+    let mut refresh = false;
     let mut query = None;
     let mut limit = None;
     let mut start_ms = None;
     let mut end_ms = None;
 
     while let Some(flag) = args.next() {
+        if flag == "--refresh" {
+            if refresh {
+                return Err(CliError::Usage(
+                    "--refresh may only be supplied once".to_owned(),
+                ));
+            }
+            refresh = true;
+            continue;
+        }
         let value = args
             .next()
             .ok_or_else(|| CliError::Usage(format!("{flag} requires a value")))?;
@@ -175,6 +230,7 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
             "--fixture" => set_once(&mut fixture, PathBuf::from(value), &flag)?,
             "--source" => set_once(&mut source, value, &flag)?,
             "--language" => set_once(&mut language, value, &flag)?,
+            "--cache-dir" => set_once(&mut cache_dir, PathBuf::from(value), &flag)?,
             "--query" => set_once(&mut query, value, &flag)?,
             "--limit" => {
                 let parsed = parse_number(&flag, &value)?;
@@ -194,14 +250,24 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
 
     let input = match (fixture, source) {
         (Some(path), None) => {
-            if language.is_some() {
+            if language.is_some() || cache_dir.is_some() || refresh {
                 return Err(CliError::Usage(
-                    "--language is only valid with --source".to_owned(),
+                    "--language, --cache-dir and --refresh are only valid with --source".to_owned(),
                 ));
             }
             SearchInput::Fixture(path)
         }
-        (None, Some(url)) => SearchInput::LiveSource { url, language },
+        (None, Some(url)) => {
+            if refresh && cache_dir.is_none() {
+                return Err(CliError::Usage("--refresh requires --cache-dir".to_owned()));
+            }
+            SearchInput::LiveSource {
+                url,
+                language,
+                cache_dir,
+                refresh,
+            }
+        }
         (Some(_), Some(_)) => {
             return Err(CliError::Usage(
                 "search accepts either --fixture or --source, not both".to_owned(),
@@ -246,6 +312,7 @@ fn evidence_packet<'a>(
     compiled: &'a oriel::evidence::CompiledSource,
     query: &'a SearchQuery,
     results: &'a [RetrievedEvidence<'a>],
+    cache_status: &'static str,
 ) -> EvidencePacket<'a> {
     let moments = results
         .iter()
@@ -280,6 +347,9 @@ fn evidence_packet<'a>(
         metadata: &compiled.metadata,
         coverage: &compiled.coverage,
         acquisition: &compiled.acquisition,
+        cache: CacheReport {
+            status: cache_status,
+        },
         query: &query.text,
         moments,
         warnings,
@@ -335,10 +405,18 @@ mod tests {
         else {
             panic!("expected search command");
         };
-        let SearchInput::LiveSource { url, language } = input else {
+        let SearchInput::LiveSource {
+            url,
+            language,
+            cache_dir,
+            refresh,
+        } = input
+        else {
             panic!("expected live source input");
         };
         assert_eq!(url, "https://youtu.be/dQw4w9WgXcQ");
         assert_eq!(language.as_deref(), Some("en"));
+        assert!(cache_dir.is_none());
+        assert!(!refresh);
     }
 }
