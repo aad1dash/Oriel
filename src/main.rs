@@ -85,6 +85,7 @@ struct EvidencePacket<'a> {
 #[derive(Serialize)]
 struct CacheReport {
     status: &'static str,
+    source_changed: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -118,11 +119,17 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
             print_json(&source)?;
         }
         CliCommand::Search { input, query } => {
-            let (compiled, cache_status) = match input {
+            let (compiled, cache) = match input {
                 SearchInput::Fixture(path) => {
                     let fixture = fs::read_to_string(&path)
                         .map_err(|error| CliError::ReadFixture { path, error })?;
-                    (compile_fixture(&fixture).map_err(engine_error)?, "fixture")
+                    (
+                        compile_fixture(&fixture).map_err(engine_error)?,
+                        CacheReport {
+                            status: "fixture",
+                            source_changed: None,
+                        },
+                    )
                 }
                 SearchInput::LiveSource {
                     url,
@@ -132,17 +139,24 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
                 } => {
                     let source = canonicalise_source(&url).map_err(engine_error)?;
                     let store = cache_dir.map(FileSourceStore::new);
-                    let cached = if refresh {
-                        None
-                    } else if let Some(store) = &store {
+                    let previous = if let Some(store) = &store {
                         store
                             .load_latest(&source, language.as_deref())
                             .map_err(engine_error)?
                     } else {
                         None
                     };
-                    if let Some(cached) = cached {
-                        (cached, "hit")
+                    if !refresh && previous.is_some() {
+                        let cached = previous.ok_or_else(|| {
+                            CliError::Usage("cache state changed unexpectedly".to_owned())
+                        })?;
+                        (
+                            cached,
+                            CacheReport {
+                                status: "hit",
+                                source_changed: None,
+                            },
+                        )
                     } else {
                         let acquired = YtDlpProvider::default()
                             .ingest(&url, language.as_deref())
@@ -152,19 +166,30 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
                                 .save(&acquired, language.is_none())
                                 .map_err(engine_error)?;
                         }
-                        let status = if store.is_none() {
-                            "disabled"
+                        let cache = if store.is_none() {
+                            CacheReport {
+                                status: "disabled",
+                                source_changed: None,
+                            }
                         } else if refresh {
-                            "refreshed"
+                            CacheReport {
+                                status: "refreshed",
+                                source_changed: previous
+                                    .as_ref()
+                                    .map(|cached| cached.source_version != acquired.source_version),
+                            }
                         } else {
-                            "miss"
+                            CacheReport {
+                                status: "miss",
+                                source_changed: None,
+                            }
                         };
-                        (acquired, status)
+                        (acquired, cache)
                     }
                 }
             };
             let results = search(&compiled, &query).map_err(engine_error)?;
-            let packet = evidence_packet(&compiled, &query, &results, cache_status);
+            let packet = evidence_packet(&compiled, &query, &results, cache);
             print_json(&packet)?;
         }
     }
@@ -312,7 +337,7 @@ fn evidence_packet<'a>(
     compiled: &'a oriel::evidence::CompiledSource,
     query: &'a SearchQuery,
     results: &'a [RetrievedEvidence<'a>],
-    cache_status: &'static str,
+    cache: CacheReport,
 ) -> EvidencePacket<'a> {
     let moments = results
         .iter()
@@ -347,9 +372,7 @@ fn evidence_packet<'a>(
         metadata: &compiled.metadata,
         coverage: &compiled.coverage,
         acquisition: &compiled.acquisition,
-        cache: CacheReport {
-            status: cache_status,
-        },
+        cache,
         query: &query.text,
         moments,
         warnings,
