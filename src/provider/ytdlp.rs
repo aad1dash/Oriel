@@ -7,7 +7,12 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -26,6 +31,8 @@ const MAX_METADATA_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_CAPTION_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_STDERR_BYTES: u64 = 64 * 1024;
 const MAX_LANGUAGE_LENGTH: usize = 64;
+const DEFAULT_STAGE_TIMEOUT: Duration = Duration::from_secs(90);
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderFailureKind {
@@ -40,6 +47,11 @@ pub enum ProviderError {
     InvalidSource(SourceError),
     InvalidLanguage(String),
     ToolUnavailable,
+    TimedOut {
+        stage: &'static str,
+        timeout: Duration,
+    },
+    Cancelled(&'static str),
     ProcessFailed {
         stage: &'static str,
         kind: ProviderFailureKind,
@@ -74,6 +86,14 @@ impl fmt::Display for ProviderError {
             Self::ToolUnavailable => formatter.write_str(
                 "yt-dlp is not installed or is not available on the configured executable path",
             ),
+            Self::TimedOut { stage, timeout } => {
+                write!(
+                    formatter,
+                    "{stage} exceeded its {} second time limit",
+                    timeout.as_secs()
+                )
+            }
+            Self::Cancelled(stage) => write!(formatter, "{stage} was cancelled"),
             Self::ProcessFailed { stage, kind } => {
                 let reason = match kind {
                     ProviderFailureKind::SourceUnavailable => "the source is unavailable",
@@ -136,6 +156,56 @@ pub struct YtDlpProvider {
     executable: PathBuf,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AcquisitionControl {
+    stage_timeout: Duration,
+    cancellation: CancellationToken,
+}
+
+impl Default for AcquisitionControl {
+    fn default() -> Self {
+        Self {
+            stage_timeout: DEFAULT_STAGE_TIMEOUT,
+            cancellation: CancellationToken::new(),
+        }
+    }
+}
+
+impl AcquisitionControl {
+    #[must_use]
+    pub fn with_stage_timeout(stage_timeout: Duration) -> Self {
+        Self {
+            stage_timeout,
+            cancellation: CancellationToken::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation.clone()
+    }
+}
+
 impl Default for YtDlpProvider {
     fn default() -> Self {
         Self::new("yt-dlp")
@@ -161,6 +231,21 @@ impl YtDlpProvider {
         input: &str,
         preferred_language: Option<&str>,
     ) -> Result<CompiledSource, ProviderError> {
+        self.ingest_with_control(input, preferred_language, &AcquisitionControl::default())
+    }
+
+    /// Acquires one caption track with a bounded provider process and caller cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] under the same conditions as [`Self::ingest`],
+    /// and when either provider stage times out or is cancelled.
+    pub fn ingest_with_control(
+        &self,
+        input: &str,
+        preferred_language: Option<&str>,
+        control: &AcquisitionControl,
+    ) -> Result<CompiledSource, ProviderError> {
         let source = canonicalise_source(input).map_err(ProviderError::InvalidSource)?;
         let preferred_language = preferred_language
             .map(validate_language)
@@ -174,7 +259,12 @@ impl YtDlpProvider {
                 error,
             })?;
 
-        let result = self.ingest_in(&source, preferred_language.as_deref(), workspace.path());
+        let result = self.ingest_in(
+            &source,
+            preferred_language.as_deref(),
+            workspace.path(),
+            control,
+        );
         let cleanup = workspace.close();
         match (result, cleanup) {
             (Ok(compiled), Ok(())) => Ok(compiled),
@@ -188,6 +278,7 @@ impl YtDlpProvider {
         source: &CanonicalSource,
         preferred_language: Option<&str>,
         workspace: &Path,
+        control: &AcquisitionControl,
     ) -> Result<CompiledSource, ProviderError> {
         let metadata_path = workspace.join("metadata.json");
         let metadata_stderr = workspace.join("metadata.stderr");
@@ -197,6 +288,7 @@ impl YtDlpProvider {
             &metadata_args,
             &metadata_path,
             &metadata_stderr,
+            control,
         )?;
         let metadata_bytes = read_limited(&metadata_path, MAX_METADATA_BYTES, "metadata output")?;
         let metadata = parse_metadata(&metadata_bytes, source)?;
@@ -210,6 +302,7 @@ impl YtDlpProvider {
             &caption_args,
             &caption_stdout,
             &caption_stderr,
+            control,
         )?;
         let caption_path = find_caption_artifact(workspace)?;
         let caption_bytes = read_limited(&caption_path, MAX_CAPTION_BYTES, "caption output")?;
@@ -259,6 +352,7 @@ impl YtDlpProvider {
         arguments: &[OsString],
         stdout_path: &Path,
         stderr_path: &Path,
+        control: &AcquisitionControl,
     ) -> Result<(), ProviderError> {
         let stdout = File::create(stdout_path).map_err(|error| ProviderError::Io {
             stage: "creating provider output",
@@ -268,12 +362,15 @@ impl YtDlpProvider {
             stage: "creating provider diagnostics",
             error,
         })?;
-        let status = Command::new(&self.executable)
+        if control.cancellation.is_cancelled() {
+            return Err(ProviderError::Cancelled(stage));
+        }
+        let mut child = Command::new(&self.executable)
             .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
-            .status()
+            .spawn()
             .map_err(|error| {
                 if error.kind() == io::ErrorKind::NotFound {
                     ProviderError::ToolUnavailable
@@ -285,6 +382,28 @@ impl YtDlpProvider {
                 }
             })?;
 
+        let started = Instant::now();
+        let status = loop {
+            if control.cancellation.is_cancelled() {
+                terminate_child(&mut child, stage)?;
+                return Err(ProviderError::Cancelled(stage));
+            }
+            if started.elapsed() >= control.stage_timeout {
+                terminate_child(&mut child, stage)?;
+                return Err(ProviderError::TimedOut {
+                    stage,
+                    timeout: control.stage_timeout,
+                });
+            }
+            if let Some(status) = child.try_wait().map_err(|error| ProviderError::Io {
+                stage: "waiting for yt-dlp",
+                error,
+            })? {
+                break status;
+            }
+            thread::sleep(PROCESS_POLL_INTERVAL);
+        };
+
         if status.success() {
             return Ok(());
         }
@@ -295,6 +414,26 @@ impl YtDlpProvider {
             kind: classify_failure(&diagnostics),
         })
     }
+}
+
+fn terminate_child(
+    child: &mut std::process::Child,
+    stage: &'static str,
+) -> Result<(), ProviderError> {
+    let already_exited = child.try_wait().map_err(|error| ProviderError::Io {
+        stage: "checking yt-dlp before termination",
+        error,
+    })?;
+    if already_exited.is_none() {
+        child.kill().map_err(|error| ProviderError::Io {
+            stage: "terminating yt-dlp",
+            error,
+        })?;
+    }
+    child
+        .wait()
+        .map_err(|error| ProviderError::Io { stage, error })?;
+    Ok(())
 }
 
 #[derive(Deserialize, Serialize)]
@@ -671,7 +810,13 @@ fn classify_failure(stderr: &[u8]) -> ProviderFailureKind {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::Path};
+    use std::{
+        collections::BTreeMap,
+        ffi::OsString,
+        path::Path,
+        thread,
+        time::{Duration, Instant},
+    };
 
     use crate::{
         evidence::CaptionProvenance,
@@ -679,9 +824,10 @@ mod tests {
     };
 
     use super::{
-        ProviderError, ProviderFailureKind, SelectedCaption, SelectedCaptionKind, YtDlpMetadata,
-        YtDlpTrack, caption_arguments, classify_failure, metadata_arguments, parse_json3,
-        parse_metadata, select_caption, validate_language,
+        AcquisitionControl, ProviderError, ProviderFailureKind, SelectedCaption,
+        SelectedCaptionKind, YtDlpMetadata, YtDlpProvider, YtDlpTrack, caption_arguments,
+        classify_failure, metadata_arguments, parse_json3, parse_metadata, select_caption,
+        validate_language,
     };
 
     fn source() -> CanonicalSource {
@@ -808,5 +954,56 @@ mod tests {
             classify_failure(b"ERROR: Video unavailable"),
             ProviderFailureKind::SourceUnavailable
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provider_process_is_terminated_at_the_stage_timeout() {
+        let workspace = tempfile::tempdir().expect("workspace should be created");
+        let provider = YtDlpProvider::new("/bin/sleep");
+        let control = AcquisitionControl::with_stage_timeout(Duration::from_millis(40));
+        let started = Instant::now();
+
+        let error = provider
+            .run_stage(
+                "test acquisition",
+                &[OsString::from("5")],
+                &workspace.path().join("stdout"),
+                &workspace.path().join("stderr"),
+                &control,
+            )
+            .expect_err("the provider should time out");
+
+        assert!(matches!(error, ProviderError::TimedOut { .. }));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn provider_process_can_be_cancelled_and_reaped() {
+        let workspace = tempfile::tempdir().expect("workspace should be created");
+        let provider = YtDlpProvider::new("/bin/sleep");
+        let control = AcquisitionControl::default();
+        let cancellation = control.cancellation_token();
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            cancellation.cancel();
+        });
+
+        let error = provider
+            .run_stage(
+                "test acquisition",
+                &[OsString::from("5")],
+                &workspace.path().join("stdout"),
+                &workspace.path().join("stderr"),
+                &control,
+            )
+            .expect_err("the provider should be cancelled");
+        canceller.join().expect("canceller should finish");
+
+        assert!(matches!(
+            error,
+            ProviderError::Cancelled("test acquisition")
+        ));
     }
 }
