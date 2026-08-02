@@ -53,6 +53,7 @@ impl fmt::Display for CliError {
 impl Error for CliError {}
 
 enum CliCommand {
+    Help,
     Resolve(String),
     Mcp {
         cache_dir: PathBuf,
@@ -88,6 +89,7 @@ fn main() -> ExitCode {
 
 fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
     match parse_command(args)? {
+        CliCommand::Help => println!("{USAGE}"),
         CliCommand::Resolve(input) => {
             let source = canonicalise_source(&input).map_err(engine_error)?;
             print_json(&source)?;
@@ -213,12 +215,22 @@ fn engine_error(error: impl Error + 'static) -> CliError {
     CliError::Engine(Box::new(error))
 }
 
-fn parse_command(mut args: impl Iterator<Item = String>) -> Result<CliCommand, CliError> {
-    match args.next().as_deref() {
-        Some("resolve") => parse_resolve(args),
-        Some("search") => parse_search(args),
-        Some("read") => parse_read(args),
-        Some("mcp") => parse_mcp(args),
+fn parse_command(args: impl Iterator<Item = String>) -> Result<CliCommand, CliError> {
+    let arguments = args.collect::<Vec<_>>();
+    if matches!(arguments.as_slice(), [flag] if flag == "--help" || flag == "-h")
+        || matches!(arguments.as_slice(), [command, flag]
+            if matches!(command.as_str(), "resolve" | "search" | "read" | "mcp")
+                && (flag == "--help" || flag == "-h"))
+    {
+        return Ok(CliCommand::Help);
+    }
+
+    let mut arguments = arguments.into_iter();
+    match arguments.next().as_deref() {
+        Some("resolve") => parse_resolve(arguments),
+        Some("search") => parse_search(arguments),
+        Some("read") => parse_read(arguments),
+        Some("mcp") => parse_mcp(arguments),
         Some(command) => Err(CliError::Usage(format!("unknown command '{command}'"))),
         None => Err(CliError::Usage("a command is required".to_owned())),
     }

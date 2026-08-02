@@ -280,10 +280,7 @@ pub fn transcript_packet(compiled: &CompiledSource, cache: CacheReport) -> Trans
         transcript.captions.clone()
     });
 
-    let mut warnings = coverage_warnings(compiled);
-    if caption_provenance != CaptionProvenance::Manual {
-        warnings.push("captions_machine_generated");
-    }
+    let warnings = source_warnings(compiled);
 
     TranscriptPacket {
         source: compiled.source.clone(),
@@ -331,6 +328,18 @@ fn coverage_warnings(compiled: &CompiledSource) -> Vec<&'static str> {
     warnings
 }
 
+fn source_warnings(compiled: &CompiledSource) -> Vec<&'static str> {
+    let mut warnings = coverage_warnings(compiled);
+    if compiled
+        .evidence
+        .first()
+        .is_some_and(|evidence| evidence.transcript.captions != CaptionProvenance::Manual)
+    {
+        warnings.push("captions_machine_generated");
+    }
+    warnings
+}
+
 /// Packages already compiled evidence for a transport without changing retrieval behaviour.
 ///
 /// # Errors
@@ -367,7 +376,7 @@ pub fn evidence_packet(
         cache,
         query: query.text.clone(),
         moments,
-        warnings: coverage_warnings(compiled),
+        warnings: source_warnings(compiled),
     })
 }
 
@@ -450,6 +459,23 @@ cue\t20000\t30000\tThe answer turned out to depend on dimension.\n";
 
         assert_eq!(packet.caption_provenance, CaptionProvenance::Manual);
         assert!(!packet.warnings.contains(&"captions_machine_generated"));
+    }
+
+    #[test]
+    fn generated_search_evidence_warns_that_its_wording_was_machine_heard() {
+        let compiled = compile_fixture(GENERATED).expect("fixture should compile");
+        let packet = evidence_packet(
+            &compiled,
+            &SearchQuery::new("needle rotates"),
+            fixture_cache(),
+        )
+        .expect("search should work");
+
+        assert_eq!(
+            packet.moments[0].caption_provenance,
+            CaptionProvenance::Generated
+        );
+        assert!(packet.warnings.contains(&"captions_machine_generated"));
     }
 
     #[test]

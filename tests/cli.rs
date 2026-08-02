@@ -48,3 +48,24 @@ fn reports_invalid_fixture_input_without_panicking() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be UTF-8");
     assert!(stderr.contains("could not read fixture 'missing.tsv'"));
 }
+
+#[test]
+fn help_is_a_success_at_the_root_and_for_each_command() {
+    for arguments in [
+        vec!["--help"],
+        vec!["resolve", "--help"],
+        vec!["search", "--help"],
+        vec!["read", "--help"],
+        vec!["mcp", "--help"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_oriel"))
+            .args(arguments)
+            .output()
+            .expect("CLI should run");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
+        assert!(stdout.starts_with("Usage:\n"));
+        assert!(output.stderr.is_empty());
+    }
+}
