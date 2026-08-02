@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tempfile::Builder;
 
 use crate::{
-    compile::{AcquiredCue, AcquiredSource, CompileError, compile_source},
+    compile::{AcquiredCue, AcquiredSource, CompileError, compile_source, segment_cues},
     evidence::{
         AcquisitionProvenance, CaptionProvenance, CompiledSource, Coverage, SourceMetadata,
         ToolProvenance, TranscriptProvenance,
@@ -33,6 +33,7 @@ const MAX_STDERR_BYTES: u64 = 64 * 1024;
 const MAX_LANGUAGE_LENGTH: usize = 64;
 const DEFAULT_STAGE_TIMEOUT: Duration = Duration::from_secs(90);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const PASSAGE_TARGET_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderFailureKind {
@@ -306,7 +307,7 @@ impl YtDlpProvider {
         )?;
         let caption_path = find_caption_artifact(workspace)?;
         let caption_bytes = read_limited(&caption_path, MAX_CAPTION_BYTES, "caption output")?;
-        let cues = parse_json3(&caption_bytes)?;
+        let cues = parse_json3_passages(&caption_bytes)?;
         let duration_ms = duration_ms(metadata.duration)?;
         let caption_provenance = selected.provenance();
         let creator = metadata
@@ -676,6 +677,11 @@ fn duration_ms(duration: Option<f64>) -> Result<u64, ProviderError> {
         .map_err(|_| ProviderError::InvalidMetadata("duration is too large"))
 }
 
+/// Parses JSON3 captions and normalises rolling caption fragments into passages.
+fn parse_json3_passages(input: &[u8]) -> Result<Vec<AcquiredCue>, ProviderError> {
+    Ok(segment_cues(parse_json3(input)?, PASSAGE_TARGET_MS))
+}
+
 fn parse_json3(input: &[u8]) -> Result<Vec<AcquiredCue>, ProviderError> {
     let caption: Json3Caption = serde_json::from_slice(input)
         .map_err(|_| ProviderError::InvalidCaptions("are malformed"))?;
@@ -826,8 +832,8 @@ mod tests {
     use super::{
         AcquisitionControl, ProviderError, ProviderFailureKind, SelectedCaption,
         SelectedCaptionKind, YtDlpMetadata, YtDlpProvider, YtDlpTrack, caption_arguments,
-        classify_failure, metadata_arguments, parse_json3, parse_metadata, select_caption,
-        validate_language,
+        classify_failure, metadata_arguments, parse_json3, parse_json3_passages, parse_metadata,
+        select_caption, validate_language,
     };
 
     fn source() -> CanonicalSource {
@@ -908,6 +914,30 @@ mod tests {
         assert_eq!(cues[0].start_ms, 1_000);
         assert_eq!(cues[0].end_ms, 3_000);
         assert_eq!(cues[0].text, "hello world");
+    }
+
+    #[test]
+    fn rolling_caption_fragments_become_readable_passages() {
+        let passages = parse_json3_passages(
+            br#"{"events":[
+                {"tStartMs":0,"dDurationMs":12000,"segs":[{"utf8":"There's a deceptively simple problem"}]},
+                {"tStartMs":10000,"dDurationMs":12000,"segs":[{"utf8":"that's tormented mathematicians for 50"}]},
+                {"tStartMs":20000,"dDurationMs":12000,"segs":[{"utf8":"years. Suppose you have a needle."}]},
+                {"tStartMs":30000,"dDurationMs":12000,"segs":[{"utf8":"What's the smallest area you can sweep?"}]}
+            ]}"#,
+        )
+        .expect("captions should parse");
+
+        assert_eq!(passages.len(), 2);
+        assert_eq!(passages[0].start_ms, 0);
+        assert_eq!(passages[0].end_ms, 32_000);
+        assert_eq!(
+            passages[0].text,
+            "There's a deceptively simple problem that's tormented mathematicians for 50 \
+years. Suppose you have a needle."
+        );
+        assert_eq!(passages[1].start_ms, 30_000);
+        assert_eq!(passages[1].text, "What's the smallest area you can sweep?");
     }
 
     #[test]

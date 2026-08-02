@@ -14,7 +14,9 @@ use crate::{
     source::{CanonicalSource, SourceProvider},
 };
 
-const STORE_SCHEMA_VERSION: u32 = 1;
+// Version 2 segments captions into passages. Version 1 entries hold fragment-level
+// evidence and must be reacquired rather than served.
+const STORE_SCHEMA_VERSION: u32 = 2;
 const MAX_POINTER_BYTES: u64 = 128;
 const MAX_SOURCE_BYTES: u64 = 100 * 1024 * 1024;
 const VERSION_PREFIX: &str = "source-v1:sha256:";
