@@ -103,7 +103,10 @@ fn rank_evidence<'a>(
         }
     }
 
-    let minimum_matches = query_terms.len().div_ceil(3).max(1);
+    // A third of the query's terms must appear, but never demand more than two.
+    // Without the cap, asking a question in full sentences raises the bar until
+    // no passage can clear it, so clearer questions retrieved less.
+    let minimum_matches = query_terms.len().div_ceil(3).clamp(1, 2);
     if matched_terms.len() < minimum_matches {
         return None;
     }
@@ -221,6 +224,39 @@ cue\t20000\t30000\tThe speaker corrects the earlier cache claim.\n";
         let results = search(&source, &query).expect("search should work");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].evidence.start_ms, 20_000);
+    }
+
+    #[test]
+    fn a_long_natural_question_finds_what_a_short_one_finds() {
+        let source = compile_fixture(FIXTURE).expect("fixture should compile");
+        let short = search(&source, &SearchQuery::new("cache invalidation pipeline"))
+            .expect("search should work");
+        let long = search(
+            &source,
+            &SearchQuery::new(
+                "I am not very technical yet but I am trying to understand \
+                 how the diagram explains the cache invalidation pipeline",
+            ),
+        )
+        .expect("search should work");
+
+        assert_eq!(short[0].evidence.start_ms, 10_000);
+        assert_eq!(long[0].evidence.start_ms, 10_000);
+    }
+
+    #[test]
+    fn a_long_question_about_an_absent_subject_still_returns_nothing() {
+        let source = compile_fixture(FIXTURE).expect("fixture should compile");
+        let results = search(
+            &source,
+            &SearchQuery::new(
+                "I am trying to understand which graph database and which \
+                 vector store the speaker recommends",
+            ),
+        )
+        .expect("search should work");
+
+        assert!(results.is_empty());
     }
 
     #[test]
