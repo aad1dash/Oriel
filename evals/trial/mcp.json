@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "oriel": {
+      "command": "/path/to/oriel/target/release/oriel",
+      "args": ["mcp", "--cache-dir", "/path/to/oriel/.oriel-cache"]
+    }
+  }
+}

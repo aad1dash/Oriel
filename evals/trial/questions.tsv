@@ -1,0 +1,10 @@
+id	video_id	archetype	expected_tool	question
+adopt-graph	mBePcvqLX88	adoption	read_source	Someone sent me this: https://www.youtube.com/watch?v=mBePcvqLX88 . Is there anything in it worth adopting for what I am building in this repo? Be concrete about which part of my repo it would touch.
+explain-graph	mBePcvqLX88	explain	read_source	Explain what https://www.youtube.com/watch?v=mBePcvqLX88 is actually arguing, Feynman-style. Analogy first, then the mechanism. I want his position, not a list of topics.
+locate-graph	mBePcvqLX88	locate	search_source	In https://www.youtube.com/watch?v=mBePcvqLX88 , does he name a specific graph database or tool, and at what point in the video does he say it?
+adopt-gpt	mHG7K7QmQyU	adoption	read_source	https://www.youtube.com/watch?v=mHG7K7QmQyU - should this change how I choose or compare models in this repo? Tell me yes or no and why.
+explain-gpt	mHG7K7QmQyU	explain	read_source	Explain the argument in https://www.youtube.com/watch?v=mHG7K7QmQyU plainly. What is his actual position on the model, stated as a claim I could disagree with?
+locate-gpt	mHG7K7QmQyU	locate	search_source	At what point in https://www.youtube.com/watch?v=mHG7K7QmQyU does he compare it to Claude? I want the timestamp so I can jump there.
+adopt-kakeya	5J3tYU_-IZI	adoption	read_source	https://www.youtube.com/watch?v=5J3tYU_-IZI - is this worth my attention given what this repo does? I am happy to hear no.
+explain-kakeya	5J3tYU_-IZI	explain	read_source	Explain what the Kakeya conjecture is and why anyone cares, using https://www.youtube.com/watch?v=5J3tYU_-IZI . Feynman-style, analogy first.
+locate-kakeya	5J3tYU_-IZI	locate	search_source	In https://www.youtube.com/watch?v=5J3tYU_-IZI , where do they explain fractional or fractal dimension? Give me the timestamp.

@@ -2,3 +2,8 @@
 .oriel-cache/
 .oriel-session
 .DS_Store
+# Raw trial transcripts quote the calling repository's own files. Kept local;
+# regenerate with evals/trial/run.py. The graded findings are in results.md.
+/evals/trial/runs/
+/evals/trial/results.json
+/evals/trial/summary.txt
