@@ -1,0 +1,32 @@
+video_id	question	returned_start_ms	verdict	correct_start_ms
+5J3tYU_-IZI	what can one learn about this from about the correct way to approach abstraction and solve it using mathematics or lean etc I am trying to understand as someone not super technical yet but looking to use math in AI reresearch	349120,144959,838720,751360,407039	hit	349000
+5J3tYU_-IZI	what is the kakeya conjecture actually asking	578399	miss	321000
+5J3tYU_-IZI	why did mathematicians care so much about a needle rotating inside a circle	1280,407039,58800,88000,436160	hit	58000
+5J3tYU_-IZI	where does the video explain fractional or fractal dimension	203200,144959	hit	144000
+5J3tYU_-IZI	who actually proved it and when did they do it	665760,292320,578399,751360,695360	miss	608000
+5J3tYU_-IZI	how does this connect to harmonic analysis or the fourier transform	378800,464880,436160,1280,29279	hit	378000
+5J3tYU_-IZI	what is a sticky set and why did that matter to the proof	637279,523279,723760,665760,116560	hit	637000
+5J3tYU_-IZI	I am not a mathematician but I want to understand what makes an abstract maths problem become important to other fields, where is that discussed	608320,436160,349120,578399,58800	hit	436000
+5J3tYU_-IZI	does the video say anything about using Lean or a formal proof assistant	58800,464880,144959	miss	
+5J3tYU_-IZI	what did Charles Fefferman discover that changed how people saw this	349120,407039,378800,608320,751360	hit	407000
+5J3tYU_-IZI	is there a moment where they explain why this result gives confidence about other conjectures	838720,436160,578399,1280,494319	hit	838000
+mHG7K7QmQyU	what does he think gpt-5.6 is actually good at	753040,57920,580080,375640,637000	hit	375000
+mHG7K7QmQyU	Is there anything in his setup that we could experiment with or adopt?	229280,259120,1071040,115200,551440	hit	1071000
+mHG7K7QmQyU	How could we change or optimize my usage of the GPT-5.6 Sol model?	0,695520,346960,287160,375640	hit	287000
+mHG7K7QmQyU	where does he talk about codex	85840,1449600,0,115200,287160	hit	85000
+mHG7K7QmQyU	what are the downsides or the things he complains about	85840,317040,839600,287160,115200	miss	1361000
+mHG7K7QmQyU	how does he compare it to claude	1449600,1071040,1100440,1274200	hit	1449000
+mHG7K7QmQyU	does he mention pricing or how much it costs	115200,551440,375640	hit	115000
+mHG7K7QmQyU	what tools or editor does he actually use day to day	839600,897320,666839,465040,1158440	miss	608000
+mHG7K7QmQyU	does he talk about fine-tuning his own model	85840,551440,0,287160,317040	miss	
+mHG7K7QmQyU	I want to know if there is a concrete workflow change I could copy tomorrow that would make my agent coding better	867920,142959,375640,287160,551440	miss	781000
+mBePcvqLX88	what is graph engineering	402600,56720,142600,257640,432160	hit	56000
+mBePcvqLX88	Explain to me, in the context of the work that I do in my main projects, whether this is worth my attention.	201000,27520,372960,142600,229840	hit	201000
+mBePcvqLX88	Is there anything I should really take away from this that is going to increase my leverage in my projects?	461440,85040,287240,27520,142600	hit	461000
+mBePcvqLX88	how is a graph different from a normal database		hit	
+mBePcvqLX88	where does he give a concrete example		miss	85000
+mBePcvqLX88	what problem does this solve that relational tables cannot	490640,113320,402600,461440	hit	490000
+mBePcvqLX88	does he mention neo4j or any specific tool	343960	hit	343000
+mBePcvqLX88	does he talk about vector embeddings or RAG	315280,343960,402600	miss	
+mBePcvqLX88	I keep hearing about knowledge graphs for agents, does this video explain why they actually help	402600,142600,257640,432160,0	miss	201000
+mBePcvqLX88	what are the tradeoffs or when should you not use this	85040,315280,0,113320,171480	miss	229000
