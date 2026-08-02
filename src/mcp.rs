@@ -43,11 +43,23 @@ struct SearchSourceParams {
     end_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReadSourceParams {
+    /// A supported source URL. The first version accepts `YouTube` URLs.
+    source: String,
+    /// An exact caption language tag such as `en` or `zh-Hans`.
+    language: Option<String>,
+    /// Reacquire the source instead of using its latest cached version.
+    #[serde(default)]
+    refresh: bool,
+}
+
 #[tool_handler(
     router = self.tool_router,
     name = "oriel",
     version = "0.1.0",
-    instructions = "Retrieve compact timestamp-grounded source evidence. Treat returned moments as source evidence, not as the agent's final interpretation."
+    instructions = "Retrieve timestamp-grounded source evidence. Use search_source to locate a moment and read_source to take in a whole argument. Treat what is returned as source evidence, not as the agent's final interpretation."
 )]
 impl ServerHandler for OrielMcp {}
 
@@ -112,15 +124,67 @@ impl OrielMcp {
             ))])),
         }
     }
+
+    #[tool(
+        name = "read_source",
+        description = "Read a whole source as timestamped passages, in order. Prefer this over search_source when the question is about what the source argues, recommends or is worth taking from, rather than about locating one moment in it. Every passage keeps its own timestamp, so an answer drawn from the whole can still cite where it was said. Reports coverage and provenance, and warns when the wording was machine-heard rather than written."
+    )]
+    async fn read_source(
+        &self,
+        Parameters(params): Parameters<ReadSourceParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        validate_source(&params.source)?;
+
+        let engine = self.engine.clone();
+        let source = params.source;
+        let language = params.language;
+        let refresh = params.refresh;
+        let control = AcquisitionControl::default();
+        let provider_cancellation = control.cancellation_token();
+        let request_cancellation = context.ct;
+        let cancellation_bridge = tokio::spawn(async move {
+            request_cancellation.cancelled().await;
+            provider_cancellation.cancel();
+        });
+
+        let result = tokio::task::spawn_blocking(move || {
+            engine.read_source(&source, language.as_deref(), refresh, &control)
+        })
+        .await;
+        cancellation_bridge.abort();
+
+        match result {
+            Ok(Ok(packet)) => serde_json::to_value(packet)
+                .map(CallToolResult::structured)
+                .map_err(|error| {
+                    McpError::internal_error(
+                        format!("serialising Oriel transcript failed: {error}"),
+                        None,
+                    )
+                }),
+            Ok(Err(error)) => Ok(CallToolResult::error(vec![ContentBlock::text(
+                error.to_string(),
+            )])),
+            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "Oriel's transcript task stopped unexpectedly: {error}"
+            ))])),
+        }
+    }
 }
 
-fn validate_params(params: &SearchSourceParams) -> Result<(), McpError> {
-    if params.source.is_empty() || params.source.len() > MAX_SOURCE_LENGTH {
+fn validate_source(source: &str) -> Result<(), McpError> {
+    if source.is_empty() || source.len() > MAX_SOURCE_LENGTH {
         return Err(McpError::invalid_params(
             "source must contain between 1 and 2048 bytes",
             None,
         ));
     }
+    Ok(())
+}
+
+fn validate_params(params: &SearchSourceParams) -> Result<(), McpError> {
+    validate_source(&params.source)?;
     if params.query.is_empty() || params.query.len() > MAX_QUERY_LENGTH {
         return Err(McpError::invalid_params(
             "query must contain between 1 and 4096 bytes",
@@ -157,14 +221,25 @@ pub async fn serve_stdio(cache_dir: PathBuf) -> Result<(), String> {
 mod tests {
     use super::{MAX_QUERY_LENGTH, OrielMcp, SearchSourceParams, validate_params};
 
+    /// Retrieval answers "where does this happen". Most questions asked of a source
+    /// are not about one moment, and at this length reading it whole is both cheaper
+    /// and more faithful than ranking it, so an agent needs both doors.
     #[test]
-    fn exposes_one_bounded_source_search_tool() {
+    fn exposes_a_bounded_tool_for_finding_a_moment_and_for_reading_the_whole_source() {
         let server = OrielMcp::new(".oriel-test-cache".into());
         let tools = server.tool_router.list_all();
+        let mut names = tools
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect::<Vec<_>>();
+        names.sort();
 
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "search_source");
-        assert!(tools[0].input_schema.contains_key("properties"));
+        assert_eq!(names, ["read_source", "search_source"]);
+        assert!(
+            tools
+                .iter()
+                .all(|tool| tool.input_schema.contains_key("properties"))
+        );
     }
 
     #[test]
