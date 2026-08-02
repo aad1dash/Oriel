@@ -1,7 +1,7 @@
 use std::{env, error::Error, fmt, fs, path::PathBuf, process::ExitCode};
 
 use oriel::{
-    engine::{CacheReport, CacheStatus, SourceEngine, evidence_packet},
+    engine::{CacheReport, CacheStatus, SourceEngine, evidence_packet, transcript_packet},
     fixture::compile_fixture,
     provider::ytdlp::AcquisitionControl,
     search::SearchQuery,
@@ -9,7 +9,7 @@ use oriel::{
 };
 use serde::Serialize;
 
-const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--cache-dir <path>] [--refresh] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]\n  oriel mcp --cache-dir <path>";
+const USAGE: &str = "Usage:\n  oriel resolve <youtube-url>\n  oriel search (--fixture <path> | --source <youtube-url>) --query <text> [--language <tag>] [--cache-dir <path>] [--refresh] [--limit <count>] [--start-ms <ms>] [--end-ms <ms>]\n  oriel read (--fixture <path> | --source <youtube-url>) [--language <tag>] [--cache-dir <path>] [--refresh]\n  oriel mcp --cache-dir <path>";
 
 #[derive(Debug)]
 enum CliError {
@@ -58,12 +58,15 @@ enum CliCommand {
         cache_dir: PathBuf,
     },
     Search {
-        input: SearchInput,
+        input: SourceInput,
         query: SearchQuery,
+    },
+    Read {
+        input: SourceInput,
     },
 }
 
-enum SearchInput {
+enum SourceInput {
     Fixture(PathBuf),
     LiveSource {
         url: String,
@@ -99,10 +102,8 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
         }
         CliCommand::Search { input, query } => {
             let packet = match input {
-                SearchInput::Fixture(path) => {
-                    let fixture = fs::read_to_string(&path)
-                        .map_err(|error| CliError::ReadFixture { path, error })?;
-                    let compiled = compile_fixture(&fixture).map_err(engine_error)?;
+                SourceInput::Fixture(path) => {
+                    let compiled = read_fixture(path)?;
                     evidence_packet(
                         &compiled,
                         &query,
@@ -113,7 +114,7 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
                     )
                     .map_err(engine_error)?
                 }
-                SearchInput::LiveSource {
+                SourceInput::LiveSource {
                     url,
                     language,
                     cache_dir,
@@ -130,8 +131,76 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), CliError> {
             };
             print_json(&packet)?;
         }
+        CliCommand::Read { input } => {
+            let packet = match input {
+                SourceInput::Fixture(path) => {
+                    let compiled = read_fixture(path)?;
+                    transcript_packet(
+                        &compiled,
+                        CacheReport {
+                            status: CacheStatus::Fixture,
+                            source_changed: None,
+                        },
+                    )
+                }
+                SourceInput::LiveSource {
+                    url,
+                    language,
+                    cache_dir,
+                    refresh,
+                } => SourceEngine::new(cache_dir)
+                    .read_source(
+                        &url,
+                        language.as_deref(),
+                        refresh,
+                        &AcquisitionControl::default(),
+                    )
+                    .map_err(engine_error)?,
+            };
+            print_json(&packet)?;
+        }
     }
     Ok(())
+}
+
+fn read_fixture(path: PathBuf) -> Result<oriel::evidence::CompiledSource, CliError> {
+    let fixture =
+        fs::read_to_string(&path).map_err(|error| CliError::ReadFixture { path, error })?;
+    compile_fixture(&fixture).map_err(engine_error)
+}
+
+/// Parses the flags that name a source, shared by every command that reads one.
+fn parse_read(mut args: impl Iterator<Item = String>) -> Result<CliCommand, CliError> {
+    let mut fixture = None;
+    let mut source = None;
+    let mut language = None;
+    let mut cache_dir = None;
+    let mut refresh = false;
+
+    while let Some(flag) = args.next() {
+        if flag == "--refresh" {
+            if refresh {
+                return Err(CliError::Usage(
+                    "--refresh may only be supplied once".to_owned(),
+                ));
+            }
+            refresh = true;
+            continue;
+        }
+        let value = args
+            .next()
+            .ok_or_else(|| CliError::Usage(format!("{flag} requires a value")))?;
+        match flag.as_str() {
+            "--fixture" => set_once(&mut fixture, PathBuf::from(value), &flag)?,
+            "--source" => set_once(&mut source, value, &flag)?,
+            "--language" => set_once(&mut language, value, &flag)?,
+            "--cache-dir" => set_once(&mut cache_dir, PathBuf::from(value), &flag)?,
+            _ => return Err(CliError::Usage(format!("unknown read flag '{flag}'"))),
+        }
+    }
+
+    let input = source_input(fixture, source, language, cache_dir, refresh)?;
+    Ok(CliCommand::Read { input })
 }
 
 fn print_json(value: &impl Serialize) -> Result<(), CliError> {
@@ -148,6 +217,7 @@ fn parse_command(mut args: impl Iterator<Item = String>) -> Result<CliCommand, C
     match args.next().as_deref() {
         Some("resolve") => parse_resolve(args),
         Some("search") => parse_search(args),
+        Some("read") => parse_read(args),
         Some("mcp") => parse_mcp(args),
         Some(command) => Err(CliError::Usage(format!("unknown command '{command}'"))),
         None => Err(CliError::Usage("a command is required".to_owned())),
@@ -231,37 +301,7 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
         }
     }
 
-    let input = match (fixture, source) {
-        (Some(path), None) => {
-            if language.is_some() || cache_dir.is_some() || refresh {
-                return Err(CliError::Usage(
-                    "--language, --cache-dir and --refresh are only valid with --source".to_owned(),
-                ));
-            }
-            SearchInput::Fixture(path)
-        }
-        (None, Some(url)) => {
-            if refresh && cache_dir.is_none() {
-                return Err(CliError::Usage("--refresh requires --cache-dir".to_owned()));
-            }
-            SearchInput::LiveSource {
-                url,
-                language,
-                cache_dir,
-                refresh,
-            }
-        }
-        (Some(_), Some(_)) => {
-            return Err(CliError::Usage(
-                "search accepts either --fixture or --source, not both".to_owned(),
-            ));
-        }
-        (None, None) => {
-            return Err(CliError::Usage(
-                "search requires either --fixture or --source".to_owned(),
-            ));
-        }
-    };
+    let input = source_input(fixture, source, language, cache_dir, refresh)?;
     let query_text = query.ok_or_else(|| CliError::Usage("search requires --query".to_owned()))?;
     let mut query = SearchQuery::new(query_text);
     if let Some(limit) = limit {
@@ -271,6 +311,42 @@ fn parse_search(mut args: impl Iterator<Item = String>) -> Result<CliCommand, Cl
     query.end_ms = end_ms;
 
     Ok(CliCommand::Search { input, query })
+}
+
+fn source_input(
+    fixture: Option<PathBuf>,
+    source: Option<String>,
+    language: Option<String>,
+    cache_dir: Option<PathBuf>,
+    refresh: bool,
+) -> Result<SourceInput, CliError> {
+    match (fixture, source) {
+        (Some(path), None) => {
+            if language.is_some() || cache_dir.is_some() || refresh {
+                return Err(CliError::Usage(
+                    "--language, --cache-dir and --refresh are only valid with --source".to_owned(),
+                ));
+            }
+            Ok(SourceInput::Fixture(path))
+        }
+        (None, Some(url)) => {
+            if refresh && cache_dir.is_none() {
+                return Err(CliError::Usage("--refresh requires --cache-dir".to_owned()));
+            }
+            Ok(SourceInput::LiveSource {
+                url,
+                language,
+                cache_dir,
+                refresh,
+            })
+        }
+        (Some(_), Some(_)) => Err(CliError::Usage(
+            "a command accepts either --fixture or --source, not both".to_owned(),
+        )),
+        (None, None) => Err(CliError::Usage(
+            "a command requires either --fixture or --source".to_owned(),
+        )),
+    }
 }
 
 fn set_once<T>(target: &mut Option<T>, value: T, flag: &str) -> Result<(), CliError> {
@@ -295,7 +371,7 @@ where
 mod tests {
     use std::path::PathBuf;
 
-    use super::{CliCommand, SearchInput, parse_command};
+    use super::{CliCommand, SourceInput, parse_command};
 
     #[test]
     fn parses_fixture_search_arguments_in_any_order() {
@@ -316,7 +392,7 @@ mod tests {
         else {
             panic!("expected search command");
         };
-        let SearchInput::Fixture(path) = input else {
+        let SourceInput::Fixture(path) = input else {
             panic!("expected fixture input");
         };
         assert_eq!(path.to_string_lossy(), "source.tsv");
@@ -345,7 +421,7 @@ mod tests {
         else {
             panic!("expected search command");
         };
-        let SearchInput::LiveSource {
+        let SourceInput::LiveSource {
             url,
             language,
             cache_dir,
@@ -358,6 +434,51 @@ mod tests {
         assert_eq!(language.as_deref(), Some("en"));
         assert_eq!(cache_dir, Some(PathBuf::from(".oriel-cache")));
         assert!(refresh);
+    }
+
+    #[test]
+    fn parses_a_read_command_for_a_whole_source() {
+        let args = [
+            "read",
+            "--source",
+            "https://youtu.be/dQw4w9WgXcQ",
+            "--language",
+            "en",
+            "--cache-dir",
+            ".oriel-cache",
+        ]
+        .into_iter()
+        .map(str::to_owned);
+
+        let CliCommand::Read { input } = parse_command(args).expect("arguments should parse")
+        else {
+            panic!("expected read command");
+        };
+        let SourceInput::LiveSource { url, cache_dir, .. } = input else {
+            panic!("expected live source input");
+        };
+        assert_eq!(url, "https://youtu.be/dQw4w9WgXcQ");
+        assert_eq!(cache_dir, Some(PathBuf::from(".oriel-cache")));
+    }
+
+    /// Reading a source returns all of it, so narrowing flags would be a lie.
+    #[test]
+    fn read_rejects_flags_that_would_narrow_the_source() {
+        for flag in ["--query", "--limit", "--start-ms", "--end-ms"] {
+            let args = [
+                "read",
+                "--source",
+                "https://youtu.be/dQw4w9WgXcQ",
+                flag,
+                "1",
+            ]
+            .into_iter()
+            .map(str::to_owned);
+            assert!(
+                parse_command(args).is_err(),
+                "read should reject {flag}, which only makes sense for search"
+            );
+        }
     }
 
     #[test]
