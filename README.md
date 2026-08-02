@@ -37,9 +37,35 @@ cargo run -- search \
   --query 'What changed?'
 ```
 
+Read a whole source instead of searching it, when the question is about what the source argues rather than about locating one moment:
+
+```sh
+cargo run -- read \
+  --source 'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --language en \
+  --cache-dir .oriel-cache
+```
+
+This returns every passage in order, each keeping its own timestamp, so an answer drawn from the whole argument can still cite where it was said. It takes no query or timestamp bounds. For sources of this length it is usually the better tool: an 8 to 26 minute video reads whole in 2,000 to 8,000 tokens, and measured retrieval returns 65% of what is there. See `docs/decisions/0004-read-a-whole-source.md`.
+
 The cache stores content-addressed, schema-versioned JSON. It does not retain raw metadata, signed caption URLs, audio or video.
 
 Each provider stage has a 90-second deadline. The engine also exposes a cancellation token for future long-running surfaces; either condition terminates and reaps the provider process before temporary files are removed.
+
+Generated captions arrive as short overlapping fragments. The YouTube adapter merges them into passages of at least 30 seconds so that a returned excerpt is readable on its own.
+
+## Run a retrieval session
+
+`./ask` drives one source without retyping the full command, prints timestamps and excerpts instead of JSON, and records what you asked and whether it worked.
+
+```sh
+./ask --video 'https://www.youtube.com/watch?v=VIDEO_ID'
+./ask 'where does she explain why the first approach failed?'
+./ask --hit          # the right moment came back
+./ask --miss 12:34   # it did not; the answer is at 12:34
+```
+
+Ask in ordinary words rather than in keywords you already know appear in the source. Every question and verdict is appended to `evals/session-log.tsv`, which is intended to become the first retrieval corpus whose questions were not written alongside the transcript.
 
 The deterministic fixture path remains available offline:
 
@@ -66,7 +92,9 @@ Build Oriel, then configure an MCP client to launch the binary over local `stdio
 }
 ```
 
-The initial `search_source` tool accepts a source URL, query and optional language, timestamp bounds, result limit and refresh flag. It returns the same structured evidence packet as the CLI. MCP cancellation propagates to live provider acquisition.
+Two tools are exposed. `search_source` accepts a source URL, query and optional language, timestamp bounds, result limit and refresh flag, and returns the same structured evidence packet as the CLI. `read_source` accepts a source URL and optional language and refresh flag, and returns the whole source as ordered, individually timestamped passages.
+
+Prefer `read_source` when the question is about what the source argues, recommends or is worth taking from; prefer `search_source` when the question is genuinely about locating a moment, or when the source is too long to read whole. Both share one acquisition, cache and provenance path, and MCP cancellation propagates to live provider acquisition.
 
 ## Verify
 
@@ -83,8 +111,13 @@ Future TypeScript product surfaces use Bun. No pnpm project is present.
 
 - Live acquisition currently supports YouTube captions available as JSON3 through `yt-dlp`.
 - Refresh is explicit; a warm cache hit does not contact YouTube to detect changes.
-- Retrieval evaluation is still synthetic and does not establish the release recall target.
-- The MCP surface intentionally contains only source search; source status, reusable context packets and project-application behaviour remain to be proven through real agent use.
+- Retrieval finds the right moment for 20 of 31 real questions (65%) against a 90% release target, measured in `evals/session-log.tsv`. Reading a source whole sidesteps this; searching it does not.
+- Retrieval matches words literally. It has no notion that `vector search` and `semantic search` mean the same thing, and six of eleven measured failures are exactly that gap.
+- Retrieval returns evidence for subjects a source never discusses: three of four planted absent subjects came back with results. About thirty lexical configurations were swept against the corpus and none improved this without costing more recall than it saved.
+- Generated captions mishear proper nouns. In fourteen minutes about the Kakeya conjecture the captions never spell `Kakeya` once. This damages both tools, though `read_source` at least carries the correctly spelled title.
+- Passage length is a fixed 30 seconds chosen by inspection rather than by measurement.
+- A cache written before passage segmentation is rejected as an unsupported schema; delete the cache directory to reacquire.
+- The MCP surface contains only source search and whole-source reading; source status, reusable context packets and project-application behaviour remain to be proven through real agent use. Whether agents choose correctly between the two tools is unproven.
 - The web application, transcription and visual evidence are not implemented.
 
 The founding product brief is in [`plans/spec1.md`](plans/spec1.md). Current implementation state is in [`status.md`](status.md).
