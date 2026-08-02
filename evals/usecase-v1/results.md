@@ -124,7 +124,7 @@ Implemented in this repository slice:
 
 - search packets now warn when captions were machine-generated, matching whole reads;
 - ordinary root and command `--help` invocations now succeed;
-- a repository-packaged `study-with-oriel` skill encodes Scout, Learn, Apply and Find,
+- a repository-packaged `oriel` skill encodes Scout, Learn, Apply and Find,
   whole-source-first reading, temporary readers for long or multiple sources, no retained
   interpretation and a final citation audit.
 

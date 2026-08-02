@@ -104,7 +104,7 @@ failure?”, Codex can use `search_source` first.
 ### Add the study workflow
 
 The repository also includes a candidate Codex skill at
-`skills/study-with-oriel`. MCP remains the capability; the skill supplies the judgement
+`skills/oriel`. MCP remains the capability; the skill supplies the judgement
 that does not fit in a short tool description:
 
 - **Scout:** decide whether a video deserves the user's time;

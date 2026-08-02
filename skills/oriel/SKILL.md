@@ -1,9 +1,9 @@
 ---
-name: study-with-oriel
+name: oriel
 description: Use Oriel to study timestamped YouTube evidence inside the user's active work. Trigger when the user provides one or more YouTube URLs and asks whether a source is worth their attention, what it means, what can be learned or adopted, how it applies to a project, or where something was said. Use the Oriel MCP rather than asking the user to fetch a transcript manually.
 ---
 
-# Study with Oriel
+# Oriel
 
 Turn a video into grounded understanding or action without making Oriel a second brain.
 

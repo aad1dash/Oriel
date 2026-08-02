@@ -32,7 +32,7 @@ Oriel does not run an internal model, retain interpretations or build a transcri
   when visuals were not processed.
 - Provider deadlines and caller cancellation terminate and reap child processes.
 - Root and command-level `--help` and `-h` now succeed.
-- A repository-packaged `study-with-oriel` skill encodes four calling behaviours:
+- A repository-packaged `oriel` skill encodes four calling behaviours:
   Scout, Learn, Apply and Find. It prefers a complete read for ordinary videos, uses
   temporary readers for long or multiple sources and finishes with a citation audit.
 

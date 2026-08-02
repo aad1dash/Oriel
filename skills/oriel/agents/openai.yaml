@@ -1,7 +1,7 @@
 interface:
-  display_name: "Study with Oriel"
+  display_name: "Oriel"
   short_description: "Study videos inside active agent work"
-  default_prompt: "Use $study-with-oriel to study this video for what I am doing now."
+  default_prompt: "Use $oriel to study this video for what I am doing now."
 dependencies:
   tools:
     - type: "mcp"
