@@ -31,6 +31,7 @@ fn returns_a_compact_timestamped_evidence_packet() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8");
     assert!(stdout.contains(r#""start_ms":20000"#));
+    assert!(stdout.contains(r#""timestamp_label":"0:20""#));
     assert!(stdout.contains(r#""caption_provenance":"manual""#));
     assert!(stdout.contains(r#""warnings":["visuals_not_processed"]"#));
     assert!(!stdout.contains("full transcript"));

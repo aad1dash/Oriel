@@ -212,6 +212,7 @@ pub struct EvidencePacket {
 pub struct EvidenceMoment {
     pub id: String,
     pub start_ms: u64,
+    pub timestamp_label: String,
     pub end_ms: u64,
     pub timestamp_url: String,
     pub excerpt: String,
@@ -240,6 +241,7 @@ pub struct TranscriptPacket {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TranscriptPassage {
     pub start_ms: u64,
+    pub timestamp_label: String,
     pub end_ms: u64,
     pub timestamp_url: String,
     pub text: String,
@@ -259,6 +261,7 @@ pub fn transcript_packet(compiled: &CompiledSource, cache: CacheReport) -> Trans
         .iter()
         .map(|evidence| TranscriptPassage {
             start_ms: evidence.start_ms,
+            timestamp_label: timestamp_label(evidence.start_ms),
             end_ms: evidence.end_ms,
             timestamp_url: timestamp_url(compiled, evidence.start_ms),
             text: evidence.text.clone(),
@@ -303,6 +306,20 @@ fn timestamp_url(compiled: &CompiledSource, start_ms: u64) -> String {
     format!("{}&t={}s", compiled.source.canonical_url, start_ms / 1_000)
 }
 
+fn timestamp_label(start_ms: u64) -> String {
+    let total_seconds = start_ms / 1_000;
+    let seconds = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let minutes = total_minutes % 60;
+    let hours = total_minutes / 60;
+
+    if hours == 0 {
+        format!("{minutes}:{seconds:02}")
+    } else {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    }
+}
+
 fn coverage_warnings(compiled: &CompiledSource) -> Vec<&'static str> {
     let mut warnings = Vec::new();
     if !compiled.coverage.transcript_complete {
@@ -329,6 +346,7 @@ pub fn evidence_packet(
         .map(|result| EvidenceMoment {
             id: result.evidence.id.clone(),
             start_ms: result.evidence.start_ms,
+            timestamp_label: timestamp_label(result.evidence.start_ms),
             end_ms: result.evidence.end_ms,
             timestamp_url: timestamp_url(compiled, result.evidence.start_ms),
             excerpt: result.evidence.text.clone(),
@@ -355,7 +373,9 @@ pub fn evidence_packet(
 
 #[cfg(test)]
 mod tests {
-    use super::{CacheReport, CacheStatus, SourceEngine, evidence_packet, transcript_packet};
+    use super::{
+        CacheReport, CacheStatus, SourceEngine, evidence_packet, timestamp_label, transcript_packet,
+    };
     use crate::{
         evidence::CaptionProvenance,
         fixture::compile_fixture,
@@ -408,6 +428,7 @@ cue\t20000\t30000\tThe answer turned out to depend on dimension.\n";
             "A needle rotates inside a shrinking area."
         );
         assert!(packet.passages[1].timestamp_url.ends_with("&t=10s"));
+        assert_eq!(packet.passages[1].timestamp_label, "0:10");
     }
 
     /// Generated captions mishear proper nouns — in a source about the Kakeya
@@ -445,8 +466,15 @@ cue\t20000\t30000\tThe answer turned out to depend on dimension.\n";
         .expect("search should work");
 
         assert_eq!(packet.moments[0].start_ms, 0);
+        assert_eq!(packet.moments[0].timestamp_label, "0:00");
         assert_eq!(packet.cache.status, CacheStatus::Fixture);
         assert_eq!(packet.moments[0].evidence_kind, "transcript");
+    }
+
+    #[test]
+    fn timestamp_labels_are_canonical_for_short_and_long_sources() {
+        assert_eq!(timestamp_label(201_999), "3:21");
+        assert_eq!(timestamp_label(3_661_000), "1:01:01");
     }
 
     #[test]

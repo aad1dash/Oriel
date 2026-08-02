@@ -152,6 +152,7 @@ fn stdio_agent_can_search_cached_source_evidence() {
 
     assert_eq!(packet["cache"]["status"], "hit");
     assert_eq!(packet["moments"][0]["start_ms"], 10_000);
+    assert_eq!(packet["moments"][0]["timestamp_label"], "0:10");
     session.shutdown();
 }
 
@@ -166,6 +167,7 @@ fn stdio_agent_can_read_a_cached_source_whole() {
 
     assert_eq!(packet["cache"]["status"], "hit");
     assert_eq!(packet["passage_count"], 2);
+    assert_eq!(packet["passages"][1]["timestamp_label"], "0:10");
     assert_eq!(
         packet["passages"][1]["text"],
         "Timestamped evidence remains attached to its source."
