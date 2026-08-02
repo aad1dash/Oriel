@@ -101,6 +101,23 @@ itself. Oriel supplies ordered, timestamped source evidence; it does not add a
 second model call. For a precise question such as “where does she explain the
 failure?”, Codex can use `search_source` first.
 
+### Add the study workflow
+
+The repository also includes a candidate Codex skill at
+`skills/study-with-oriel`. MCP remains the capability; the skill supplies the judgement
+that does not fit in a short tool description:
+
+- **Scout:** decide whether a video deserves the user's time;
+- **Learn:** explain what it establishes, assumes and leaves unresolved;
+- **Apply:** compare supported lessons with an active project and propose the smallest
+  reversible experiment;
+- **Find:** locate the exact moment where something was said.
+
+The skill reads an ordinary source whole before reasoning, keeps source evidence separate
+from agent interpretation and audits timestamp receipts before answering. It does not
+create a second cache, wiki or retained brief. It is packaged here for inspection and is
+not installed into the user's global Codex configuration automatically.
+
 ## Use from another MCP-compatible agent
 
 Build Oriel, then configure an MCP client to launch the binary over local `stdio` with an explicit cache directory:
@@ -141,7 +158,8 @@ Future TypeScript product surfaces use Bun. No pnpm project is present.
 - Generated captions mishear proper nouns. In fourteen minutes about the Kakeya conjecture the captions never spell `Kakeya` once. This damages both tools, though `read_source` at least carries the correctly spelled title.
 - Passage length is a fixed 30 seconds chosen by inspection rather than by measurement.
 - A cache written before passage segmentation is rejected as an unsupported schema; delete the cache directory to reacquire.
-- The MCP surface contains only source search and whole-source reading; source status and reusable context packets remain unproven. One nine-session trial from an unrelated repository selected correctly between the two tools every time, but only on `claude-opus-5` and sources of 8 to 26 minutes.
+- The MCP surface contains only source search and whole-source reading. One nine-session trial from an unrelated repository selected correctly between the tools every time. A newer three-source Codex use-case evaluation answered 30/30 questions and validated 222/222 timestamp links, but used the equivalent installed CLI because this already-running task could not dynamically acquire the MCP.
+- Sources longer than 26 minutes, multi-source synthesis and smaller calling models remain unmeasured.
 - The web application, transcription and visual evidence are not implemented.
 
-The founding product brief is in [`plans/spec1.md`](plans/spec1.md). Current implementation state is in [`status.md`](status.md).
+The founding product brief is in [`plans/spec1.md`](plans/spec1.md). Current implementation state is in [`status.md`](status.md), and the latest real-use report is in [`evals/usecase-v1/results.md`](evals/usecase-v1/results.md).

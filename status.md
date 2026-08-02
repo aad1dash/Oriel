@@ -1,84 +1,129 @@
 # Status
 
-**2026-08-02 — IN PROGRESS: evidence engine, measured retrieval, Codex adoption**
+**2026-08-02 — WORKING PROOF: fast evidence engine, real-use behaviour measured**
 
-## Works
+## Current position
 
-- Common YouTube URL forms resolve to one validated source identity.
-- Live `yt-dlp` metadata and manual or generated JSON3 captions compile through the same evidence engine as fixtures.
-- Compiled evidence retains language, caption and acquisition provenance, SHA-256 source version and honest coverage.
-- Deterministic lexical retrieval supports natural questions, timestamp filters and absent answers.
-- The CLI accepts a live URL or fixture and returns compact evidence packets with clickable timestamps.
-- An explicit local cache stores immutable, inspectable JSON versions and serves repeated questions without provider access.
-- `--refresh` reacquires a cached source and reports whether compiled evidence changed.
-- Every provider stage has a 90-second deadline and a caller can cancel acquisition; either path terminates and reaps the child process before cleanup.
-- A local MCP `stdio` server exposes two bounded tools, `search_source` and `read_source`, over the same engine and structured packets as the CLI.
-- Rolling caption fragments are merged into passages of at least 30 seconds, so an excerpt is a readable thought rather than four words.
-- A question asked in full sentences retrieves what its keyword form retrieves.
-- `./ask` drives one video from the terminal and records each question and verdict to `evals/session-log.tsv`.
-- `oriel read` and the MCP `read_source` tool return a whole source as ordered passages, each keeping its own timestamp, for questions about what a source argues rather than about locating a moment in it.
-- A whole-source read warns when the wording was machine-heard, which a search result can check against its matched terms but a transcript cannot.
-- Both tools have been used by an agent that did not write them, from an unrelated repository, and chose correctly between them on every question.
-- Every returned moment and passage carries a canonical human-readable timestamp label derived from the same millisecond value as its clickable URL.
-- The verified release binary is installed and registered as a user-level Codex MCP, so new Codex tasks can use Oriel without repository configuration.
+Oriel can turn a public, captioned YouTube video into complete timestamped evidence and
+hand it to a calling agent in milliseconds from a warm local cache. Three isolated Codex
+readers used it to answer thirty realistic questions across three videos. This proves the
+source-to-work behaviour; it does not yet prove ordinary MCP use in a fresh Codex task.
+
+The product boundary remains deliberately small:
+
+```text
+YouTube URL → captions → timestamped local evidence → calling agent judgement
+```
+
+Oriel does not run an internal model, retain interpretations or build a transcript wiki.
+
+## What works
+
+- Common YouTube URLs resolve to one validated identity.
+- `yt-dlp` metadata and manual or generated JSON3 captions compile through the same
+  `SourceEngine` used by fixtures, CLI and MCP.
+- Evidence retains source version, language, caption provenance, coverage, provider
+  information, millisecond timestamps, human-readable labels and clickable URLs.
+- `read_source` returns the whole source as ordered passages. `search_source` locates
+  bounded moments. Both reuse an immutable, inspectable local cache.
+- Search and whole-read packets now both warn when captions are machine-generated and
+  when visuals were not processed.
+- Provider deadlines and caller cancellation terminate and reap child processes.
+- Root and command-level `--help` and `-h` now succeed.
+- A repository-packaged `study-with-oriel` skill encodes four calling behaviours:
+  Scout, Learn, Apply and Find. It prefers a complete read for ordinary videos, uses
+  temporary readers for long or multiple sources and finishes with a citation audit.
 
 ## Evidence
 
-- Rust 1.97.1; Bun 1.3.14 reserved for future TypeScript surfaces; `yt-dlp 2026.07.04` locally verified.
-- Formatting and strict Clippy pass.
-- 51 tests pass offline; live access is excluded from defaults.
-- Deterministic timeout and cancellation tests terminate a five-second child in under one second.
-- A wire-level MCP test initialises the server, discovers both tools, retrieves the correct cached moment at 10 seconds and reads the same source back whole as ordered, citable passages — all without network access.
-- Synthetic retrieval corpus: 5/5 expected outcomes in the top five, including one negative case. This is infrastructure proof, not the product recall claim.
-- Bounded live smoke: URL → manual English captions → expected evidence at 22.64 seconds; no media downloaded.
-- Cache smoke: first request `miss`; identical network-restricted request `hit`; private directories were mode `0700`.
-- Refresh smoke: unchanged reacquisition reported `source_changed: false` against the prior semantic version.
-- Release benchmark, arm64 macOS 26.6, 10,000 synthetic cues, 500 warm runs: p50 2.908 ms, p95 3.098 ms, p99 3.172 ms. This is latency evidence, not retrieval-quality evidence.
-- Two retrieval defects were found by asking the engine ordinary questions rather than by testing it. Both are fixed and covered:
-  - Generated captions arrived as ~5-second overlapping fragments, so a top result read `"of mathematics. We're talking about the"`. A live 14-minute source now compiles to 31 passages instead of 406 fragments.
-  - The match threshold scaled with question length, so a question needing 30 words demanded 10 of them inside one fragment and returned nothing. Phrasing a question fully now retrieves at least what its keyword form retrieves.
-- The synthetic 5/5 corpus result is not recall evidence. Its questions reuse the fixture's own vocabulary, because both were written together.
-- First measured recall, `evals/session-log.tsv`: **20 of 31 questions (65%)** across three real sources, against a 90% release target. Questions were written from titles alone, before any transcript was read, and graded afterwards against the full transcript. Per source: Kakeya 8/11, gpt-5.6 6/10, graph engineering 6/10.
-- The 11 failures group into three causes, none of which stemming would fix:
-  - **Vocabulary gap (6).** The source says `Königsberg`, the question says `concrete example`. The source says `isn't magically perfect`, the question says `downsides`. These are conceptual, not morphological.
-  - **False positives on absent topics (3 of 4).** Three of four deliberately absent subjects returned evidence anyway. For `does he talk about vector embeddings or RAG`, the top result was the video's sponsor read.
-  - **Mistranscribed proper nouns (2).** In 14 minutes about the Kakeya conjecture, generated captions never spell `Kakeya` once; it appears as `CA` (16), `CAA` (11), `CAT` (4) and `Kaya` (5). Any question naming the subject fails.
-- Full transcripts are small: the three cached sources read whole as 31, 55 and 18 passages, or 3,299, 8,013 and 2,072 tokens, for videos of 14, 26 and 8 minutes. At this length an agent can read the whole source more cheaply and more accurately than retrieving 65% of it.
-- `where does he give a concrete example` returns nothing from retrieval. The whole transcript carries the answer at 85 seconds and spells `Königsberg` correctly, which the captions elsewhere do not manage for `Kakeya`.
-- **First trial from an unrelated repository: tool choice 9 of 9**, recorded in `evals/trial/results.md` and reproducible with `python3 evals/trial/run.py`. Nine questions written before any run, three archetypes across the three cached sources, each in its own headless agent session started in `AgentPsych` with web access withheld so the two tools competed for the same slot. Cost $3.27, all warm, no network.
-  - The two tools **compose rather than compete**. Two of three locate questions escalated `search_source` → `read_source`, and in both the escalation made the answer correct. A ranked list cannot support the sentence "he never says this."
-  - **The caller removed the sponsor-read false positive that thirty lexical configurations could not.** `search_source` returned the sponsor passage at 343960 ms as it always does; the agent labelled it a sponsor read and dropped it, because it could see the surrounding source.
-  - **`read_source` recovered a graded miss.** `what are the downsides or the things he complains about` is a miss in the corpus at 1361000 ms. A whole-source read surfaced and quoted it, verified against cache at 1361440 ms — one of the six vocabulary gaps, closed with no retrieval change.
-  - The corpus is also generous in the other direction: it grades `how does he compare it to claude` a hit at 1449000 ms, and the agent read that passage and correctly judged it not a comparison.
-  - 47 of 47 cited timestamp links land inside a real passage. 7 of 9 answers carried a source timestamp; the two without were adoption verdicts, one grounded in the calling repository instead and one a "no".
-- Three defects surfaced by the trial, none of them in retrieval: packets carry no human-readable timestamp so agents compute `mm:ss` and drift (`[3:29]` over a correct link to `t=201s`); a quote spanning two passages was cited at the passage where the claim begins rather than where the words are; and agents silently repair mistranscribed proper nouns from their own knowledge (`Opus 48` → `Opus 4.8`, `CAA` → `Kakeya`), flagging the repair in one run and not in another.
-- The timestamp-label defect is fixed at the packet boundary and covered through engine, CLI and wire-level MCP tests. A direct handshake with the installed binary discovered both tools through MCP protocol version `2025-11-25`.
-- **The false positives were attacked and the attack failed on measurement.** Roughly thirty lexical configurations were swept against the corpus: inverse-document-frequency term weighting, an absolute distinctiveness floor, a question-coverage ratio, a 104-word closed-class stopword list, and a two-words-or-one-strong-word rule. The frontier was 20/31 with 2 of 4 false positives, or 17/31 with 1 of 4 — roughly one and a half recall points per false positive removed. The one configuration that held recall did so by dropping the answer to a source's own title question. Nothing shipped; `src/search.rs` is unchanged. The finding is that lexical retrieval is at its ceiling here, not that the defect is acceptable.
+### Real use
 
-## Not yet supported
+The frozen use-case set is in `evals/usecase-v1/questions.tsv`; the report and exact
+method are in `evals/usecase-v1/results.md`.
 
-- Authenticated, private, live or age-restricted sources.
-- Representative authorised retrieval corpus and the 90% recall claim.
-- Progressive acquisition status, web, local transcription or visual evidence.
-- Broader MCP status/context operations.
-- A trial on any model other than `claude-opus-5`, or on a source too long to read whole.
-- Natural use as a standalone YouTube summariser from an ordinary Codex task.
-- Automatic change checks on warm hits; refresh is explicit.
+- **30/30 questions answered** across Kakeya, GPT-5.6 and graph-engineering videos.
+- **222/222 timestamp links valid** against cached passage starts.
+- **29/30 answer sections included a source timestamp.** One project-fit section omitted
+  a video receipt even though the engine returned it; the skill now requires a final
+  citation audit.
+- **3/3 triage answers reached a specific watch-or-skip judgement.**
+- **3/3 negative controls rejected unsupported extrapolation.**
+- **3/3 sources carried the missing-visuals caveat.**
+- Two fresh skill trials chose complete reading, used search only to verify a decisive
+  moment, separated source evidence from project judgement and proposed bounded tests.
+  The second trial also resisted transferring Kakeya mathematics into AI doctrine.
+
+The three readers used the installed CLI against the same engine and cache because this
+already-running Codex task could not dynamically acquire the newly registered MCP. MCP
+transport has separate deterministic wire-level tests; a fresh ordinary Codex MCP task
+is still the next adoption proof.
+
+### Speed
+
+Live cold reads used an empty temporary cache. Warm figures are fifty release-binary
+process invocations per source on arm64 macOS 26.6.
+
+| Source | Duration | Cold whole read | Warm p50 | Warm p95 |
+|---|---:|---:|---:|---:|
+| GPT-5.6 | 26 min | 2.61 s | 1.973 ms | 2.215 ms |
+| Graph engineering | 8 min | 3.87 s | 1.892 ms | 1.951 ms |
+| Kakeya | 15 min | 2.78 s | 1.878 ms | 1.950 ms |
+
+A dense `timestamp|text` packet was 20.7–26.0% smaller in bytes, but was not shipped:
+bytes are not model tokens, and citation reliability must be measured before changing
+the packet contract.
+
+### Earlier engine proof
+
+- The initial independent trial selected correctly between search and whole read on
+  **9/9 questions**; **47/47 cited links** landed inside real passages.
+- Questions written from titles alone produced **20/31 lexical retrieval hits (65%)**.
+  Complete reads recovered conceptual vocabulary gaps and let the caller reject sponsor
+  passages, so whole-source reading is the current default for 8–26 minute sources.
+- Roughly thirty lexical configurations failed to improve absent-topic precision without
+  a disproportionate recall loss. No unmeasured ranking change shipped.
+- Offline tests cover URL identity, acquisition, provenance, cache behaviour, refresh,
+  retrieval, cancellation, cleanup, CLI and MCP schemas and wire behaviour.
+- Formatting, strict Clippy and **53 offline tests** pass on Rust 1.97.1.
+
+## Product decisions
+
+- **Keep MCP as the capability.** It works without Bash and gives agents typed,
+  cancellable tools.
+- **Use a skill for judgement.** The skill explains when to Scout, Learn, Apply or Find;
+  it does not duplicate the engine.
+- **Hand ordinary sources over whole.** At the tested sizes, completeness is cheaper and
+  more reliable than asking lexical search to understand the question.
+- **Do not create a mini wiki.** Reuse compiled source evidence, but keep interpretation
+  ephemeral in the calling task.
+- **Do not add an internal LLM, embeddings or a graph framework yet.** None is required by
+  the measured use cases.
+
+## Known limitations
+
+- Only public YouTube captions available as JSON3 through `yt-dlp` are supported.
+- Generated captions can badly corrupt proper nouns; no silent correction is safe yet.
+- Visuals, local transcription, private sources and non-YouTube sources are unsupported.
+- Warm-cache change detection is explicit through `--refresh`.
+- Lexical search cannot reliably answer conceptual or absent-topic questions.
+- Sources longer than 26 minutes and multi-source synthesis have not been measured.
+- The real-use answers used GPT-5.6 Sol; smaller-model calling behaviour is untested.
+- The repository skill and newly fixed release binary are not installed into the
+  founder's global Codex configuration by this change.
 
 ## Next
 
-1. **Use Oriel from ordinary Codex tasks, not a test repository.** Ask it to summarise videos that matter, explain an argument and locate exact moments. Include one source long enough to make whole-source reading expensive. The user-level MCP registration is ready; real use should now choose the next build.
+1. **Install the updated release binary and repository skill only with explicit founder
+   approval, then run one fresh Codex task with no repository attached.** This is the
+   smallest test of Oriel as an everyday YouTube summariser.
+2. **Use it naturally for a week.** Capture failures from videos the founder already
+   wants to understand rather than inventing features in advance.
+3. **Measure one long or multi-source case.** Compare whole transcripts, temporary
+   source-bounded readers and any compact packet using actual model tokens, time,
+   citation coverage and answer quality.
+4. **Run one restricted proper-noun experiment.** Seed a verified title term only in an
+   evaluation copy and retain it only if it repairs the frozen failures without changing
+   the other outcomes.
 
-2. **Mistranscribed proper nouns are the remaining trust defect.** The trial shows calling agents silently repairing them from their own knowledge — `Opus 48` → `Opus 4.8`, `CAA` → `Kakeya` — flagging it in one run and not in another. A loud failure would be safer than an invisible correction that is right most of the time. Measure this separately before choosing between fuzzy matching and seeding vocabulary from the title, which is already correct in the packet.
-
-3. **Semantic retrieval remains justified but not urgent, and the trial weakened the case further.** Six of eleven failures are vocabulary gaps; the trial showed a caller closing one of them by reading whole. It earns its cost when sources arrive too long to read whole. It must stay local.
-
-4. **Repeat the trial on a smaller model.** 9/9 was measured on `claude-opus-5` alone, and following a tool description is a model capability. A trial that only holds for the strongest model has not established that the descriptions are good.
-
-Absent subjects are no longer open. The measurement said the answer was not in ranking; the trial showed where it is. A caller holding the whole source labelled the sponsor read as a sponsor read and dropped it, which is what thirty lexical configurations could not do.
-
-Passage length is a fixed 30 seconds chosen by inspection, not measurement. Nothing in this session isolated it as a cause of failure.
-
-The working tree is clean and local `main` is two commits ahead of `origin`; the adoption changes have not been pushed. Reproduce the recall number with `python3 evals/replay.py`, which reads the cache and contacts nothing.
-
-No interface design has been selected. Web design requires founder consultation, external Claude Opus work and served HTML directions before implementation.
+No web interface or Vercel deployment is justified yet. The useful next evidence comes
+from ordinary Codex use, not from hosting the same engine behind another surface.
