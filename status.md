@@ -7,7 +7,9 @@
 Oriel can turn a public, captioned YouTube video into complete timestamped evidence and
 hand it to a calling agent in milliseconds from a warm local cache. Three isolated Codex
 readers used it to answer thirty realistic questions across three videos. This proves the
-source-to-work behaviour; it does not yet prove ordinary MCP use in a fresh Codex task.
+source-to-work behaviour. The updated binary, MCP registration and study skill are now
+installed at user scope; ordinary use in a fresh Codex task is the remaining adoption
+proof.
 
 The product boundary remains deliberately small:
 
@@ -85,6 +87,9 @@ the packet contract.
 - Offline tests cover URL identity, acquisition, provenance, cache behaviour, refresh,
   retrieval, cancellation, cleanup, CLI and MCP schemas and wire behaviour.
 - Formatting, strict Clippy and **53 offline tests** pass on Rust 1.97.1.
+- The installed release binary passes its CLI help check, a direct MCP handshake using
+  protocol `2025-11-25` discovers both tools, and the installed skill matches and validates
+  against the repository copy.
 
 ## Product decisions
 
@@ -108,14 +113,14 @@ the packet contract.
 - Lexical search cannot reliably answer conceptual or absent-topic questions.
 - Sources longer than 26 minutes and multi-source synthesis have not been measured.
 - The real-use answers used GPT-5.6 Sol; smaller-model calling behaviour is untested.
-- The repository skill and newly fixed release binary are not installed into the
-  founder's global Codex configuration by this change.
+- The user-level installation has not yet been exercised by a newly started ordinary
+  Codex task; this already-running task cannot dynamically refresh its MCP and skill set.
 
 ## Next
 
-1. **Install the updated release binary and repository skill only with explicit founder
-   approval, then run one fresh Codex task with no repository attached.** This is the
-   smallest test of Oriel as an everyday YouTube summariser.
+1. **Run one fresh Codex task with no repository attached.** Ask it to use Oriel on a
+   video that already matters. This is the smallest test of Oriel as an everyday YouTube
+   summariser.
 2. **Use it naturally for a week.** Capture failures from videos the founder already
    wants to understand rather than inventing features in advance.
 3. **Measure one long or multi-source case.** Compare whole transcripts, temporary
