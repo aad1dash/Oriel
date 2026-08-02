@@ -65,6 +65,37 @@ impl fmt::Display for CompileError {
 
 impl Error for CompileError {}
 
+/// Merges short caption fragments into passages spanning at least `target_ms`.
+///
+/// Generated captions arrive as overlapping fragments a few words wide, which are
+/// too small to read as evidence or to match a question against. Merging is greedy
+/// and therefore idempotent: a passage that already meets the target is emitted
+/// unchanged.
+#[must_use]
+pub fn segment_cues(cues: Vec<AcquiredCue>, target_ms: u64) -> Vec<AcquiredCue> {
+    let mut segments = Vec::new();
+    let mut open: Option<AcquiredCue> = None;
+
+    for cue in cues {
+        match &mut open {
+            None => open = Some(cue),
+            Some(passage) => {
+                passage.text.push(' ');
+                passage.text.push_str(&cue.text);
+                passage.end_ms = passage.end_ms.max(cue.end_ms);
+            }
+        }
+        if open
+            .as_ref()
+            .is_some_and(|passage| passage.end_ms - passage.start_ms >= target_ms)
+        {
+            segments.extend(open.take());
+        }
+    }
+    segments.extend(open);
+    segments
+}
+
 /// Validates acquired evidence and compiles it into Oriel's shared source model.
 ///
 /// # Errors
@@ -256,8 +287,48 @@ mod tests {
     };
 
     use super::{
-        AcquiredCue, AcquiredSource, CompileError, compile_source, verify_compiled_source,
+        AcquiredCue, AcquiredSource, CompileError, compile_source, segment_cues,
+        verify_compiled_source,
     };
+
+    fn rolling_fragments() -> Vec<AcquiredCue> {
+        [
+            (0, 5_000, "There's a deceptively simple problem"),
+            (3_000, 8_000, "that's tormented mathematicians for 50"),
+            (6_000, 11_000, "years. Suppose you have a needle."),
+            (9_000, 14_000, "What's the smallest area you can sweep?"),
+        ]
+        .into_iter()
+        .map(|(start_ms, end_ms, text)| AcquiredCue {
+            start_ms,
+            end_ms,
+            text: text.to_owned(),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn merges_rolling_caption_fragments_into_readable_passages() {
+        let segmented = segment_cues(rolling_fragments(), 10_000);
+
+        assert_eq!(segmented.len(), 2);
+        assert_eq!(segmented[0].start_ms, 0);
+        assert_eq!(segmented[0].end_ms, 11_000);
+        assert_eq!(
+            segmented[0].text,
+            "There's a deceptively simple problem that's tormented mathematicians for 50 \
+years. Suppose you have a needle."
+        );
+        assert_eq!(segmented[1].start_ms, 9_000);
+        assert_eq!(segmented[1].text, "What's the smallest area you can sweep?");
+    }
+
+    #[test]
+    fn segmenting_already_segmented_evidence_changes_nothing() {
+        let once = segment_cues(rolling_fragments(), 10_000);
+        let twice = segment_cues(once.clone(), 10_000);
+        assert_eq!(once, twice);
+    }
 
     fn acquired_source() -> AcquiredSource {
         AcquiredSource {
