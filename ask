@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Ask one video real questions and record whether the right moment came back.
+#
+#   ./ask --video 'https://youtu.be/VIDEO_ID'   load a video and make it current
+#   ./ask 'your question'                        ask it, in your own words
+#   ./ask --hit                                  the top result was right
+#   ./ask --miss 12:34                           it was wrong; the answer is at 12:34
+#   ./ask --read                                 print the whole thing, timestamped
+#
+# Every question and verdict is appended to evals/session-log.tsv.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+BIN=target/release/oriel
+CURRENT=.oriel-session
+LOG=evals/session-log.tsv
+CACHE=.oriel-cache
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+if [ ! -x "$BIN" ]; then
+  echo "building oriel..." >&2
+  cargo build --release --offline >&2
+fi
+
+mkdir -p evals
+if [ ! -f "$LOG" ]; then
+  printf 'video_id\tquestion\treturned_start_ms\tverdict\tcorrect_start_ms\n' > "$LOG"
+fi
+
+# Runs the engine and leaves the response in ORIEL_JSON, or exits with its error.
+# With a question it searches; without one it reads the whole source.
+run_engine() {
+  local out status
+  set +e
+  if [ $# -ge 2 ]; then
+    out=$("$BIN" search --source "$1" --language en --cache-dir "$CACHE" --query "$2" 2>&1)
+  else
+    out=$("$BIN" read --source "$1" --language en --cache-dir "$CACHE" 2>&1)
+  fi
+  status=$?
+  set -e
+  if [ $status -ne 0 ]; then
+    printf '%s\n' "$out" >&2
+    exit $status
+  fi
+  export ORIEL_JSON="$out"
+}
+
+amend() {
+  ORIEL_VERDICT="$1" ORIEL_CORRECT="$2" python3 - "$LOG" <<'PY'
+import os, sys
+log = sys.argv[1]
+rows = open(log).read().splitlines()
+if len(rows) <= 1:
+    sys.exit("no question to mark yet.")
+last = rows[-1].split('\t')
+last[3] = os.environ['ORIEL_VERDICT']
+last[4] = os.environ['ORIEL_CORRECT']
+rows[-1] = '\t'.join(last)
+open(log, 'w').write('\n'.join(rows) + '\n')
+ms = os.environ['ORIEL_CORRECT']
+where = f" (answer at {int(ms)//60000}:{int(ms)//1000%60:02d})" if ms else ""
+print(f"  marked {os.environ['ORIEL_VERDICT']}{where}")
+PY
+}
+
+to_ms() {
+  python3 -c "
+import sys
+parts = sys.argv[1].split(':')
+if len(parts) > 3 or not all(p.isdigit() for p in parts):
+    sys.exit('bad timestamp: use MM:SS')
+total = 0
+for p in parts:
+    total = total * 60 + int(p)
+print(total * 1000)" "$1"
+}
+
+[ $# -eq 0 ] && usage
+
+case "${1:-}" in
+  --video)
+    [ $# -eq 2 ] || usage
+    echo "$2" > "$CURRENT"
+    echo "loading (first time contacts YouTube; later questions are local)..."
+    run_engine "$2" loading
+    python3 - <<'PY'
+import json, os
+d = json.loads(os.environ['ORIEL_JSON'])
+m = d['metadata']
+print(f"  {m['title']}  —  {m['creator']}  ({m['duration_ms'] // 60000} min)")
+print(f"  captions: {d['acquisition']['source_format']}   cache: {d['cache']['status']}")
+print()
+print("  ready. ask it something:  ./ask 'your question'")
+PY
+    ;;
+
+  --read)
+    [ $# -eq 1 ] || usage
+    [ -f "$CURRENT" ] || { echo "no video loaded. run: ./ask --video 'URL'" >&2; exit 1; }
+    run_engine "$(cat "$CURRENT")"
+    python3 - <<'PY'
+import json, os
+d = json.loads(os.environ['ORIEL_JSON'])
+
+def clock(ms):
+    return f"{ms // 60000}:{ms // 1000 % 60:02d}"
+
+print()
+print(f"  \033[1m{d['metadata']['title']}\033[0m  -  {d['metadata']['creator']}")
+if 'captions_machine_generated' in d['warnings']:
+    print("  captions were machine-heard, so names and jargon may be misspelt.")
+print()
+for passage in d['passages']:
+    print(f"  \033[2m{clock(passage['start_ms'])}\033[0m  {passage['text']}")
+words = sum(len(p['text'].split()) for p in d['passages'])
+print()
+print(f"  {d['passage_count']} passages, {words} words. cache: {d['cache']['status']}")
+PY
+    ;;
+
+  --hit)
+    [ $# -eq 1 ] || usage
+    amend hit ''
+    ;;
+
+  --miss)
+    [ $# -eq 2 ] || usage
+    correct_ms=$(to_ms "$2") || exit 1
+    amend miss "$correct_ms"
+    ;;
+
+  -h|--help|--*) usage ;;
+
+  *)
+    [ -f "$CURRENT" ] || { echo "no video loaded. run: ./ask --video 'URL'" >&2; exit 1; }
+    run_engine "$(cat "$CURRENT")" "$1"
+    ORIEL_QUESTION="$1" python3 - "$LOG" <<'PY'
+import json, os, sys
+log = sys.argv[1]
+d = json.loads(os.environ['ORIEL_JSON'])
+question = os.environ['ORIEL_QUESTION']
+
+def clock(ms):
+    return f"{ms // 60000}:{ms // 1000 % 60:02d}"
+
+print()
+if not d['moments']:
+    print("  nothing found.")
+    print()
+for moment in d['moments']:
+    print(f"  \033[1m{clock(moment['start_ms'])}\033[0m  {moment['timestamp_url']}")
+    print(f"     {moment['excerpt']}")
+    print()
+
+with open(log, 'a') as handle:
+    returned = ','.join(str(m['start_ms']) for m in d['moments'])
+    handle.write(f"{d['source']['source_id']}\t{question}\t{returned}\t\t\n")
+
+print("  right one in there?   ./ask --hit      otherwise   ./ask --miss MM:SS")
+PY
+    ;;
+esac

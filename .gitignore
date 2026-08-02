@@ -1,3 +1,4 @@
 /target/
 .oriel-cache/
+.oriel-session
 .DS_Store
