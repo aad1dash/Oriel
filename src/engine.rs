@@ -74,6 +74,37 @@ impl SourceEngine {
         query: &SearchQuery,
         control: &AcquisitionControl,
     ) -> Result<EvidencePacket, EngineError> {
+        let (compiled, cache) = self.resolve(input, language, refresh, control)?;
+        evidence_packet(&compiled, query, cache).map_err(EngineError::Search)
+    }
+
+    /// Reads a whole source, for questions that are answered by the argument rather
+    /// than by one moment in it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when source validation, cache access, acquisition or
+    /// evidence compilation fails.
+    pub fn read_source(
+        &self,
+        input: &str,
+        language: Option<&str>,
+        refresh: bool,
+        control: &AcquisitionControl,
+    ) -> Result<TranscriptPacket, EngineError> {
+        let (compiled, cache) = self.resolve(input, language, refresh, control)?;
+        Ok(transcript_packet(&compiled, cache))
+    }
+
+    /// Returns compiled evidence for a source, from the cache when it is there and
+    /// from the provider when it is not.
+    fn resolve(
+        &self,
+        input: &str,
+        language: Option<&str>,
+        refresh: bool,
+        control: &AcquisitionControl,
+    ) -> Result<(CompiledSource, CacheReport), EngineError> {
         if refresh && self.store.is_none() {
             return Err(EngineError::RefreshWithoutCache);
         }
@@ -86,7 +117,7 @@ impl SourceEngine {
             .map_err(EngineError::Store)?
             .flatten();
 
-        let (compiled, cache) = if refresh {
+        let resolved = if refresh {
             let acquired = self.acquire(input, language, control)?;
             self.save(&acquired, language)?;
             let source_changed = previous
@@ -124,7 +155,7 @@ impl SourceEngine {
             )
         };
 
-        evidence_packet(&compiled, query, cache).map_err(EngineError::Search)
+        Ok(resolved)
     }
 
     fn acquire(
@@ -191,6 +222,98 @@ pub struct EvidenceMoment {
     pub matched_terms: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TranscriptPacket {
+    pub source: CanonicalSource,
+    pub source_version: String,
+    pub metadata: SourceMetadata,
+    pub coverage: Coverage,
+    pub acquisition: AcquisitionProvenance,
+    pub cache: CacheReport,
+    pub language: String,
+    pub caption_provenance: CaptionProvenance,
+    pub passage_count: usize,
+    pub passages: Vec<TranscriptPassage>,
+    pub warnings: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TranscriptPassage {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub timestamp_url: String,
+    pub text: String,
+}
+
+/// Packages a whole compiled source so a reader can quote any part of it.
+///
+/// Retrieval answers "where does this happen". Some questions are not about a
+/// moment at all, and for a source of this length reading it whole is both cheaper
+/// and more faithful than ranking it. Every passage keeps its own timestamp so an
+/// answer drawn from the argument as a whole can still be traced to where it was
+/// said.
+#[must_use]
+pub fn transcript_packet(compiled: &CompiledSource, cache: CacheReport) -> TranscriptPacket {
+    let passages = compiled
+        .evidence
+        .iter()
+        .map(|evidence| TranscriptPassage {
+            start_ms: evidence.start_ms,
+            end_ms: evidence.end_ms,
+            timestamp_url: timestamp_url(compiled, evidence.start_ms),
+            text: evidence.text.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    // Compilation rejects a source with no evidence, so the first passage carries
+    // the transcript's provenance. Treat the unreachable case as machine-heard,
+    // because warning about wording that was in fact verbatim costs a reader little
+    // and trusting wording that was in fact guessed costs it a great deal.
+    let transcript = compiled
+        .evidence
+        .first()
+        .map(|evidence| &evidence.transcript);
+    let caption_provenance = transcript.map_or(CaptionProvenance::Generated, |transcript| {
+        transcript.captions.clone()
+    });
+
+    let mut warnings = coverage_warnings(compiled);
+    if caption_provenance != CaptionProvenance::Manual {
+        warnings.push("captions_machine_generated");
+    }
+
+    TranscriptPacket {
+        source: compiled.source.clone(),
+        source_version: compiled.source_version.clone(),
+        metadata: compiled.metadata.clone(),
+        coverage: compiled.coverage.clone(),
+        acquisition: compiled.acquisition.clone(),
+        cache,
+        language: transcript
+            .map(|transcript| transcript.language.clone())
+            .unwrap_or_default(),
+        caption_provenance,
+        passage_count: passages.len(),
+        passages,
+        warnings,
+    }
+}
+
+fn timestamp_url(compiled: &CompiledSource, start_ms: u64) -> String {
+    format!("{}&t={}s", compiled.source.canonical_url, start_ms / 1_000)
+}
+
+fn coverage_warnings(compiled: &CompiledSource) -> Vec<&'static str> {
+    let mut warnings = Vec::new();
+    if !compiled.coverage.transcript_complete {
+        warnings.push("transcript_incomplete");
+    }
+    if !compiled.coverage.visuals_processed {
+        warnings.push("visuals_not_processed");
+    }
+    warnings
+}
+
 /// Packages already compiled evidence for a transport without changing retrieval behaviour.
 ///
 /// # Errors
@@ -207,11 +330,7 @@ pub fn evidence_packet(
             id: result.evidence.id.clone(),
             start_ms: result.evidence.start_ms,
             end_ms: result.evidence.end_ms,
-            timestamp_url: format!(
-                "{}&t={}s",
-                compiled.source.canonical_url,
-                result.evidence.start_ms / 1_000
-            ),
+            timestamp_url: timestamp_url(compiled, result.evidence.start_ms),
             excerpt: result.evidence.text.clone(),
             evidence_kind: "transcript",
             language: result.evidence.transcript.language.clone(),
@@ -220,13 +339,6 @@ pub fn evidence_packet(
             matched_terms: result.matched_terms,
         })
         .collect();
-    let mut warnings = Vec::new();
-    if !compiled.coverage.transcript_complete {
-        warnings.push("transcript_incomplete");
-    }
-    if !compiled.coverage.visuals_processed {
-        warnings.push("visuals_not_processed");
-    }
 
     Ok(EvidencePacket {
         source: compiled.source.clone(),
@@ -237,14 +349,15 @@ pub fn evidence_packet(
         cache,
         query: query.text.clone(),
         moments,
-        warnings,
+        warnings: coverage_warnings(compiled),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CacheReport, CacheStatus, SourceEngine, evidence_packet};
+    use super::{CacheReport, CacheStatus, SourceEngine, evidence_packet, transcript_packet};
     use crate::{
+        evidence::CaptionProvenance,
         fixture::compile_fixture,
         provider::ytdlp::{AcquisitionControl, YtDlpProvider},
         search::SearchQuery,
@@ -258,6 +371,65 @@ duration_ms\t10000\n\
 language\ten\n\
 caption_provenance\tmanual\n\
 cue\t0\t10000\tThe cache keeps timestamped evidence reusable.\n";
+
+    const GENERATED: &str = "schema_version\t1\n\
+source_url\thttps://youtu.be/dQw4w9WgXcQ\n\
+title\tTranscript fixture\n\
+creator\tOriel\n\
+duration_ms\t30000\n\
+language\ten\n\
+caption_provenance\tgenerated\n\
+cue\t0\t10000\tThe question is how small a set can be.\n\
+cue\t10000\t20000\tA needle rotates inside a shrinking area.\n\
+cue\t20000\t30000\tThe answer turned out to depend on dimension.\n";
+
+    fn fixture_cache() -> CacheReport {
+        CacheReport {
+            status: CacheStatus::Fixture,
+            source_changed: None,
+        }
+    }
+
+    #[test]
+    fn a_transcript_carries_every_passage_in_order_with_citable_timestamps() {
+        let compiled = compile_fixture(GENERATED).expect("fixture should compile");
+        let packet = transcript_packet(&compiled, fixture_cache());
+
+        assert_eq!(
+            packet
+                .passages
+                .iter()
+                .map(|passage| passage.start_ms)
+                .collect::<Vec<_>>(),
+            [0, 10_000, 20_000]
+        );
+        assert_eq!(
+            packet.passages[1].text,
+            "A needle rotates inside a shrinking area."
+        );
+        assert!(packet.passages[1].timestamp_url.ends_with("&t=10s"));
+    }
+
+    /// Generated captions mishear proper nouns — in a source about the Kakeya
+    /// conjecture they never spell it once. An agent reading the whole transcript
+    /// has no ranking signal to warn it, so the packet has to say so itself.
+    #[test]
+    fn a_generated_transcript_warns_that_its_wording_was_machine_heard() {
+        let compiled = compile_fixture(GENERATED).expect("fixture should compile");
+        let packet = transcript_packet(&compiled, fixture_cache());
+
+        assert_eq!(packet.caption_provenance, CaptionProvenance::Generated);
+        assert!(packet.warnings.contains(&"captions_machine_generated"));
+    }
+
+    #[test]
+    fn a_manual_transcript_carries_no_mishearing_warning() {
+        let compiled = compile_fixture(FIXTURE).expect("fixture should compile");
+        let packet = transcript_packet(&compiled, fixture_cache());
+
+        assert_eq!(packet.caption_provenance, CaptionProvenance::Manual);
+        assert!(!packet.warnings.contains(&"captions_machine_generated"));
+    }
 
     #[test]
     fn packet_preserves_timestamp_and_cache_provenance() {
