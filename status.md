@@ -1,6 +1,6 @@
 # Status
 
-**2026-08-02 — IN PROGRESS: evidence engine, measured retrieval, whole-source reading**
+**2026-08-02 — IN PROGRESS: evidence engine, measured retrieval, Codex adoption**
 
 ## Works
 
@@ -19,12 +19,14 @@
 - `oriel read` and the MCP `read_source` tool return a whole source as ordered passages, each keeping its own timestamp, for questions about what a source argues rather than about locating a moment in it.
 - A whole-source read warns when the wording was machine-heard, which a search result can check against its matched terms but a transcript cannot.
 - Both tools have been used by an agent that did not write them, from an unrelated repository, and chose correctly between them on every question.
+- Every returned moment and passage carries a canonical human-readable timestamp label derived from the same millisecond value as its clickable URL.
+- The verified release binary is installed and registered as a user-level Codex MCP, so new Codex tasks can use Oriel without repository configuration.
 
 ## Evidence
 
 - Rust 1.97.1; Bun 1.3.14 reserved for future TypeScript surfaces; `yt-dlp 2026.07.04` locally verified.
 - Formatting and strict Clippy pass.
-- 50 tests pass offline; live access is excluded from defaults.
+- 51 tests pass offline; live access is excluded from defaults.
 - Deterministic timeout and cancellation tests terminate a five-second child in under one second.
 - A wire-level MCP test initialises the server, discovers both tools, retrieves the correct cached moment at 10 seconds and reads the same source back whole as ordered, citable passages — all without network access.
 - Synthetic retrieval corpus: 5/5 expected outcomes in the top five, including one negative case. This is infrastructure proof, not the product recall claim.
@@ -50,6 +52,7 @@
   - The corpus is also generous in the other direction: it grades `how does he compare it to claude` a hit at 1449000 ms, and the agent read that passage and correctly judged it not a comparison.
   - 47 of 47 cited timestamp links land inside a real passage. 7 of 9 answers carried a source timestamp; the two without were adoption verdicts, one grounded in the calling repository instead and one a "no".
 - Three defects surfaced by the trial, none of them in retrieval: packets carry no human-readable timestamp so agents compute `mm:ss` and drift (`[3:29]` over a correct link to `t=201s`); a quote spanning two passages was cited at the passage where the claim begins rather than where the words are; and agents silently repair mistranscribed proper nouns from their own knowledge (`Opus 48` → `Opus 4.8`, `CAA` → `Kakeya`), flagging the repair in one run and not in another.
+- The timestamp-label defect is fixed at the packet boundary and covered through engine, CLI and wire-level MCP tests. A direct handshake with the installed binary discovered both tools through MCP protocol version `2025-11-25`.
 - **The false positives were attacked and the attack failed on measurement.** Roughly thirty lexical configurations were swept against the corpus: inverse-document-frequency term weighting, an absolute distinctiveness floor, a question-coverage ratio, a 104-word closed-class stopword list, and a two-words-or-one-strong-word rule. The frontier was 20/31 with 2 of 4 false positives, or 17/31 with 1 of 4 — roughly one and a half recall points per false positive removed. The one configuration that held recall did so by dropping the answer to a source's own title question. Nothing shipped; `src/search.rs` is unchanged. The finding is that lexical retrieval is at its ceiling here, not that the defect is acceptable.
 
 ## Not yet supported
@@ -59,13 +62,14 @@
 - Progressive acquisition status, web, local transcription or visual evidence.
 - Broader MCP status/context operations.
 - A trial on any model other than `claude-opus-5`, or on a source too long to read whole.
+- Natural use as a standalone YouTube summariser from an ordinary Codex task.
 - Automatic change checks on warm hits; refresh is explicit.
 
 ## Next
 
-1. **Give every passage a human-readable timestamp label.** The cheapest and best-evidenced change in the repository. Packets carry `start_ms` and `timestamp_url` but nothing preformatted, so agents compute `mm:ss` themselves and drift — one trial answer printed `[3:29]` over a correct link to `t=201s`. The link is right and the thing a human reads is wrong, which is the one failure this project cannot afford. Decision 0005 deferred it only to keep the trial's scope honest.
+1. **Use Oriel from ordinary Codex tasks, not a test repository.** Ask it to summarise videos that matter, explain an argument and locate exact moments. Include one source long enough to make whole-source reading expensive. The user-level MCP registration is ready; real use should now choose the next build.
 
-2. **Mistranscribed proper nouns are worse than measured.** The trial shows calling agents silently repairing them from their own knowledge — `Opus 48` → `Opus 4.8`, `CAA` → `Kakeya` — flagging it in one run and not in another. A loud failure would be safer than an invisible correction that is right most of the time. Measure this separately before choosing between fuzzy matching and seeding vocabulary from the title, which is already correct in the packet.
+2. **Mistranscribed proper nouns are the remaining trust defect.** The trial shows calling agents silently repairing them from their own knowledge — `Opus 48` → `Opus 4.8`, `CAA` → `Kakeya` — flagging it in one run and not in another. A loud failure would be safer than an invisible correction that is right most of the time. Measure this separately before choosing between fuzzy matching and seeding vocabulary from the title, which is already correct in the packet.
 
 3. **Semantic retrieval remains justified but not urgent, and the trial weakened the case further.** Six of eleven failures are vocabulary gaps; the trial showed a caller closing one of them by reading whole. It earns its cost when sources arrive too long to read whole. It must stay local.
 
@@ -75,6 +79,6 @@ Absent subjects are no longer open. The measurement said the answer was not in r
 
 Passage length is a fixed 30 seconds chosen by inspection, not measurement. Nothing in this session isolated it as a cause of failure.
 
-The working tree is clean and `main` is published to `origin`. Reproduce the recall number with `python3 evals/replay.py`, which reads the cache and contacts nothing.
+The working tree is clean and local `main` is two commits ahead of `origin`; the adoption changes have not been pushed. Reproduce the recall number with `python3 evals/replay.py`, which reads the cache and contacts nothing.
 
 No interface design has been selected. Web design requires founder consultation, external Claude Opus work and served HTML directions before implementation.

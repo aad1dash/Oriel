@@ -77,7 +77,31 @@ cargo run -- search \
 
 The search command returns a compact JSON evidence packet containing source identity, coverage, acquisition and cache provenance, ranked moments, timestamps and warnings.
 
-## Use from an MCP-compatible agent
+## Use from Codex anywhere
+
+Oriel does not need to be added to each repository. Install the binary once and
+register it in Codex's user-level MCP configuration:
+
+```sh
+cargo install --path . --root "$HOME/.local" --offline --force
+codex mcp add oriel -- "$HOME/.local/bin/oriel" mcp \
+  --cache-dir "$HOME/.local/share/oriel/cache"
+```
+
+Restart the Codex desktop app after registration. Oriel is then available in a
+normal Codex task, whether or not that task is attached to a repository. For
+example:
+
+```text
+Summarise this video clearly and cite the important moments: <YouTube URL>
+```
+
+Codex should use `read_source` to take in the argument and do the summarisation
+itself. Oriel supplies ordered, timestamped source evidence; it does not add a
+second model call. For a precise question such as “where does she explain the
+failure?”, Codex can use `search_source` first.
+
+## Use from another MCP-compatible agent
 
 Build Oriel, then configure an MCP client to launch the binary over local `stdio` with an explicit cache directory:
 
@@ -92,7 +116,7 @@ Build Oriel, then configure an MCP client to launch the binary over local `stdio
 }
 ```
 
-Two tools are exposed. `search_source` accepts a source URL, query and optional language, timestamp bounds, result limit and refresh flag, and returns the same structured evidence packet as the CLI. `read_source` accepts a source URL and optional language and refresh flag, and returns the whole source as ordered, individually timestamped passages.
+Two tools are exposed. `search_source` accepts a source URL, query and optional language, timestamp bounds, result limit and refresh flag, and returns the same structured evidence packet as the CLI. `read_source` accepts a source URL and optional language and refresh flag, and returns the whole source as ordered, individually timestamped passages. Search moments and transcript passages include canonical human-readable labels such as `3:21` or `1:03:08` alongside their millisecond values and clickable URLs.
 
 Prefer `read_source` when the question is about what the source argues, recommends or is worth taking from; prefer `search_source` when the question is genuinely about locating a moment, or when the source is too long to read whole. Both share one acquisition, cache and provenance path, and MCP cancellation propagates to live provider acquisition.
 
@@ -117,7 +141,7 @@ Future TypeScript product surfaces use Bun. No pnpm project is present.
 - Generated captions mishear proper nouns. In fourteen minutes about the Kakeya conjecture the captions never spell `Kakeya` once. This damages both tools, though `read_source` at least carries the correctly spelled title.
 - Passage length is a fixed 30 seconds chosen by inspection rather than by measurement.
 - A cache written before passage segmentation is rejected as an unsupported schema; delete the cache directory to reacquire.
-- The MCP surface contains only source search and whole-source reading; source status, reusable context packets and project-application behaviour remain to be proven through real agent use. Whether agents choose correctly between the two tools is unproven.
+- The MCP surface contains only source search and whole-source reading; source status and reusable context packets remain unproven. One nine-session trial from an unrelated repository selected correctly between the two tools every time, but only on `claude-opus-5` and sources of 8 to 26 minutes.
 - The web application, transcription and visual evidence are not implemented.
 
 The founding product brief is in [`plans/spec1.md`](plans/spec1.md). Current implementation state is in [`status.md`](status.md).
