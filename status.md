@@ -1,134 +1,80 @@
 # Status
 
-**2026-08-02 — WORKING PROOF: fast evidence engine, real-use behaviour measured**
+**2026-08-08 — PUBLIC RELEASE CANDIDATE: useful engine; local preparation complete**
 
 ## Current position
 
-Oriel can turn a public, captioned YouTube video into complete timestamped evidence and
-hand it to a calling agent in milliseconds from a warm local cache. Three isolated Codex
-readers used it to answer thirty realistic questions across three videos. This proves the
-source-to-work behaviour. The updated binary, MCP registration and study skill are now
-installed at user scope; ordinary use in a fresh Codex task is the remaining adoption
-proof.
-
-The product boundary remains deliberately small:
+Oriel is a working v0.1 local-first evidence engine:
 
 ```text
 YouTube URL → captions → timestamped local evidence → calling agent judgement
 ```
 
-Oriel does not run an internal model, retain interpretations or build a transcript wiki.
+It is ready to be presented publicly with that narrow claim. The open-source preparation
+is complete on `codex/open-source-readiness`, but the branch has not been pushed and the
+GitHub repository remains private. No source-engine behaviour changed in this release
+preparation.
 
-## What works
+## What is proven
 
-- Common YouTube URLs resolve to one validated identity.
-- `yt-dlp` metadata and manual or generated JSON3 captions compile through the same
-  `SourceEngine` used by fixtures, CLI and MCP.
-- Evidence retains source version, language, caption provenance, coverage, provider
-  information, millisecond timestamps, human-readable labels and clickable URLs.
-- `read_source` returns the whole source as ordered passages. `search_source` locates
-  bounded moments. Both reuse an immutable, inspectable local cache.
-- Search and whole-read packets now both warn when captions are machine-generated and
-  when visuals were not processed.
-- Provider deadlines and caller cancellation terminate and reap child processes.
-- Root and command-level `--help` and `-h` now succeed.
-- A repository-packaged `oriel` skill encodes four calling behaviours:
-  Scout, Learn, Apply and Find. It prefers a complete read for ordinary videos, uses
-  temporary readers for long or multiple sources and finishes with a citation audit.
+- CLI and local `stdio` MCP share one Rust `SourceEngine`, cache and provenance model.
+- `read_source` returns ordered, citable passages; `search_source` returns bounded moments.
+- Evidence retains source identity, version, language, caption provenance, coverage,
+  millisecond timestamps, human-readable labels and clickable URLs.
+- Provider deadlines and cancellation terminate and reap child processes. Raw media,
+  signed caption URLs and provider metadata are not retained.
+- A later ordinary Codex task used the registered MCP to read and search a new source
+  end to end. This closes the initial adoption check; it is an operational observation,
+  not a new benchmark.
+- The frozen calling-agent evaluation answered 30/30 questions and validated 222/222
+  timestamp links. One of 30 answer sections omitted a source receipt; the skill now
+  requires a citation audit.
+- Lexical retrieval found 20/31 frozen questions and returned evidence for three of four
+  absent subjects. Whole-source reading remains the default for the measured 8–26 minute
+  sources.
+- On arm64 macOS 26.6, three live cold reads took 2.61–3.87 seconds. Fifty warm release
+  invocations per source measured 1.878–1.973 ms p50 and 1.950–2.215 ms p95.
+- Formatting, strict Clippy and all 53 offline tests pass on pinned Rust 1.97.1.
 
-## Evidence
+## Public repository preparation
 
-### Real use
-
-The frozen use-case set is in `evals/usecase-v1/questions.tsv`; the report and exact
-method are in `evals/usecase-v1/results.md`.
-
-- **30/30 questions answered** across Kakeya, GPT-5.6 and graph-engineering videos.
-- **222/222 timestamp links valid** against cached passage starts.
-- **29/30 answer sections included a source timestamp.** One project-fit section omitted
-  a video receipt even though the engine returned it; the skill now requires a final
-  citation audit.
-- **3/3 triage answers reached a specific watch-or-skip judgement.**
-- **3/3 negative controls rejected unsupported extrapolation.**
-- **3/3 sources carried the missing-visuals caveat.**
-- Two fresh skill trials chose complete reading, used search only to verify a decisive
-  moment, separated source evidence from project judgement and proposed bounded tests.
-  The second trial also resisted transferring Kakeya mathematics into AI doctrine.
-
-The three readers used the installed CLI against the same engine and cache because this
-already-running Codex task could not dynamically acquire the newly registered MCP. MCP
-transport has separate deterministic wire-level tests; a fresh ordinary Codex MCP task
-is still the next adoption proof.
-
-### Speed
-
-Live cold reads used an empty temporary cache. Warm figures are fifty release-binary
-process invocations per source on arm64 macOS 26.6.
-
-| Source | Duration | Cold whole read | Warm p50 | Warm p95 |
-|---|---:|---:|---:|---:|
-| GPT-5.6 | 26 min | 2.61 s | 1.973 ms | 2.215 ms |
-| Graph engineering | 8 min | 3.87 s | 1.892 ms | 1.951 ms |
-| Kakeya | 15 min | 2.78 s | 1.878 ms | 1.950 ms |
-
-A dense `timestamp|text` packet was 20.7–26.0% smaller in bytes, but was not shipped:
-bytes are not model tokens, and citation reliability must be measured before changing
-the packet contract.
-
-### Earlier engine proof
-
-- The initial independent trial selected correctly between search and whole read on
-  **9/9 questions**; **47/47 cited links** landed inside real passages.
-- Questions written from titles alone produced **20/31 lexical retrieval hits (65%)**.
-  Complete reads recovered conceptual vocabulary gaps and let the caller reject sponsor
-  passages, so whole-source reading is the current default for 8–26 minute sources.
-- Roughly thirty lexical configurations failed to improve absent-topic precision without
-  a disproportionate recall loss. No unmeasured ranking change shipped.
-- Offline tests cover URL identity, acquisition, provenance, cache behaviour, refresh,
-  retrieval, cancellation, cleanup, CLI and MCP schemas and wire behaviour.
-- Formatting, strict Clippy and **53 offline tests** pass on Rust 1.97.1.
-- The installed release binary passes its CLI help check, a direct MCP handshake using
-  protocol `2025-11-25` discovers both tools, and the installed skill matches and validates
-  against the repository copy.
-
-## Product decisions
-
-- **Keep MCP as the capability.** It works without Bash and gives agents typed,
-  cancellable tools.
-- **Use a skill for judgement.** The skill explains when to Scout, Learn, Apply or Find;
-  it does not duplicate the engine.
-- **Hand ordinary sources over whole.** At the tested sizes, completeness is cheaper and
-  more reliable than asking lexical search to understand the question.
-- **Do not create a mini wiki.** Reuse compiled source evidence, but keep interpretation
-  ephemeral in the calling task.
-- **Do not add an internal LLM, embeddings or a graph framework yet.** None is required by
-  the measured use cases.
+- Dual licensing is explicit: MIT or Apache-2.0, at the recipient's option.
+- The README now explains the founder's real problem, the current product, installation,
+  CLI and MCP use, architecture, privacy boundary, evidence and limitations.
+- Contribution, conduct and security policies are present.
+- GitHub CI has read-only permissions, fetches the locked dependency set once, then runs
+  formatting, strict Clippy and tests offline.
+- Public evaluation scripts no longer contain machine-specific paths or silently inspect
+  founder task logs. Private context requires an explicit option; raw streams, answers
+  and diagnostics remain ignored.
+- The current RustSec audit reports zero vulnerabilities or warnings. All 92 locked
+  packages declare licences with a permissive path.
+- `Cargo.toml` remains `publish = false`. Opening the source repository does not imply a
+  crates.io release.
 
 ## Known limitations
 
-- Only public YouTube captions available as JSON3 through `yt-dlp` are supported.
-- Generated captions can badly corrupt proper nouns; no silent correction is safe yet.
-- Visuals, local transcription, private sources and non-YouTube sources are unsupported.
-- Warm-cache change detection is explicit through `--refresh`.
-- Lexical search cannot reliably answer conceptual or absent-topic questions.
-- Sources longer than 26 minutes and multi-source synthesis have not been measured.
-- The real-use answers used GPT-5.6 Sol; smaller-model calling behaviour is untested.
-- The user-level installation has not yet been exercised by a newly started ordinary
-  Codex task; this already-running task cannot dynamically refresh its MCP and skill set.
+- Live acquisition supports public YouTube captions available as JSON3 through `yt-dlp`.
+- Visuals, local transcription, private sources, authenticated sources and non-YouTube
+  sources are unsupported.
+- Generated captions can corrupt proper nouns; Oriel reports their provenance but does
+  not silently repair them.
+- Search is lexical and cannot reliably establish conceptual matches or absence.
+- Warm-cache source change detection requires explicit `--refresh`.
+- Sources longer than 26 minutes, multi-source synthesis, smaller calling models, Linux
+  live acquisition and Windows live acquisition remain unmeasured.
+- There is no web application, hosted service, account system or remote MCP transport.
 
-## Next
+## Release gate
 
-1. **Run one fresh Codex task with no repository attached.** Ask it to use Oriel on a
-   video that already matters. This is the smallest test of Oriel as an everyday YouTube
-   summariser.
-2. **Use it naturally for a week.** Capture failures from videos the founder already
-   wants to understand rather than inventing features in advance.
-3. **Measure one long or multi-source case.** Compare whole transcripts, temporary
-   source-bounded readers and any compact packet using actual model tokens, time,
-   citation coverage and answer quality.
-4. **Run one restricted proper-noun experiment.** Seed a verified title term only in an
-   evaluation copy and retain it only if it repairs the frozen failures without changing
-   the other outcomes.
+The product and repository are locally ready. The remaining release sequence is:
 
-No web interface or Vercel deployment is justified yet. The useful next evidence comes
-from ordinary Codex use, not from hosting the same engine behind another surface.
+1. review and push `codex/open-source-readiness`;
+2. require the new GitHub CI check to pass;
+3. merge the reviewed branch into `main`;
+4. enable private vulnerability reporting and set the repository description/topics;
+5. make the GitHub repository public;
+6. verify a clean public clone and the documented install path.
+
+Further retrieval, provider, visual or interface work is follow-up development. None is
+required to publish Oriel honestly as the early local-first engine described above.
