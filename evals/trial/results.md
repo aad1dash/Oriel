@@ -4,8 +4,8 @@
 
 ## Setup
 
-The agent ran in `/path/to/an/unrelated/repository`, a Python research
-harness for running psychology-style experiments on language-model agents. It shares
+The agent ran in AgentPsych, an unrelated Python research harness for running
+psychology-style experiments on language-model agents. It shares
 no code, no vocabulary and no author-intent with Oriel. It has its own `README.md`,
 `STATUS.md` and `docs/`, which the agent read.
 
@@ -13,7 +13,7 @@ Each question ran in its own headless `claude -p` session with no memory of the 
 so a tool choice is a first impression rather than a habit. Model: `claude-opus-5`.
 
 The server was registered with `--mcp-config evals/trial/mcp.json --strict-mcp-config`
-rather than by writing `.mcp.json` into AgentPsych. The agent sees identical tool
+rather than by writing `.mcp.json` into the calling repository. The agent sees identical tool
 descriptions either way, and nothing was written into that repository.
 
 Tools were restricted to `Read`, `Grep`, `Glob` and Oriel's two. `Edit`, `Write` and
@@ -132,9 +132,12 @@ cache. It shows the descriptions work at this scale. It does not show they hold 
 source too long to read whole, which is the case where choosing wrong actually costs
 something — and that case does not exist yet in this project.
 
-## Reproduce
+## Historical rerun
 
-    python3 evals/trial/run.py
+    python3 evals/trial/run.py --repo /path/to/an/unrelated/repository
 
 Requires the three sources cached and the `claude` CLI on PATH. Raw stream-json
-transcripts are in `evals/trial/runs/`.
+transcripts are written to the ignored `evals/trial/runs/` directory because they may
+quote files from the unrelated repository. They are private working material, not part
+of the published evidence. The runner now generates its machine-specific MCP config in
+a temporary directory. The dated findings above are the reviewed historical record.

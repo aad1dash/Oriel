@@ -2,8 +2,13 @@
 .oriel-cache/
 .oriel-session
 .DS_Store
-# Raw trial transcripts quote the calling repository's own files. Kept local;
-# regenerate with evals/trial/run.py. The graded findings are in results.md.
-/evals/trial/runs/
+
+# Agent evaluations can capture prompts, answers, private repository context and
+# local diagnostics. Only their frozen questions and reviewed aggregate reports
+# belong in the public repository.
+/evals/**/runs/
+/evals/**/answers/
 /evals/trial/results.json
 /evals/trial/summary.txt
+/evals/usecase-v1/codex-results.json
+/evals/**/*.stderr.txt
