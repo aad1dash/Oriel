@@ -2,9 +2,9 @@
 
 Oriel is a fast, local-first engine that turns long-form video into timestamp-grounded evidence for humans and agents.
 
-Important ideas are often discussed in YouTube videos. I kept running into the same problem: I could talk about a video, but there was no easy way to give its argument to an agent quickly, efficiently and with receipts for what was actually said. Copying transcripts by hand was slow, and asking an agent to work from a title or summary lost the source.
+Important ideas are often discussed in YouTube videos. I kept running into the same problem: I could talk about a video, but there was no easy way to give its argument to an agent quickly, efficiently and with receipts for what was actually said. Copying transcripts by hand was slow, and asking an agent to work from a title or summary lost the source. I couldn't find anything that could effortlessly and with great performance just work with my workflow so here it is. 
 
-So I learnt enough Rust to engineer the small tool I needed. Oriel compiles a captioned video once, keeps the evidence locally, and lets an agent read the source or find a precise moment in milliseconds from a warm cache. As I find real shortcomings and receive feedback, I will keep improving the engine.
+I learnt enough Rust to engineer the small tool I needed (Yes Codex was used). Oriel compiles a captioned video once, keeps the evidence locally, and lets an agent read the source or find a precise moment in milliseconds from a warm cache. As I find real shortcomings and receive feedback, I will keep improving the engine.
 
 Oriel is early, useful and deliberately narrow. It retrieves evidence; the calling agent does the interpretation.
 
