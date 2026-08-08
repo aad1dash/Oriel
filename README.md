@@ -172,7 +172,7 @@ Live-provider checks are intentionally separate because YouTube and `yt-dlp` are
 - Only YouTube is supported. Multi-source synthesis and sources longer than 26 minutes remain unmeasured.
 - Generated captions can badly misspell names and technical terms. Oriel reports that the wording was machine-generated rather than silently repairing it.
 - Search is lexical. On the frozen evaluation it found the correct moment for 20 of 31 real questions (65%), below the 90% target. It also returned results for three of four deliberately absent subjects, so a result is not proof that a source answers the question.
-- Whole-source reading is therefore the default for the evaluated 8–26 minute sources. A separate three-source calling-agent evaluation answered 30 of 30 questions and validated 222 of 222 timestamp links, but used GPT-5.6; smaller calling models are untested.
+- Whole-source reading is therefore the default for the evaluated 8–26 minute sources. In a historical founder-run three-source evaluation, the calling agent answered 30 of 30 questions and 222 of 222 timestamp links matched cached passage starts. The raw answers remain private because one run used private local context, so these reviewed aggregates are not independently reproducible from the public checkout. The evaluation used GPT-5.6; smaller calling models are untested.
 - Warm-cache change detection is explicit. A normal cache hit does not contact YouTube; use `--refresh` to check the current source.
 - The live provider depends on external YouTube and `yt-dlp` behaviour and can break independently of Oriel.
 - There is no web application, hosted service, account system or remote MCP transport.

@@ -1,6 +1,6 @@
 # Use-case evaluation 01 — whole sources inside real work
 
-**2026-08-02. Three sources, thirty questions, three isolated Codex readers.**
+**2026-08-02. Historical founder-run evaluation: three sources, thirty questions and three isolated Codex readers.**
 
 ## Decision
 
@@ -21,7 +21,8 @@ installed CLI against the same `SourceEngine` and cache. This evaluates the sour
 work behaviour, not MCP transport; MCP already has separate wire-level evidence.
 
 Raw answers and task streams stay local under ignored `answers/` and `runs/` directories
-because the GPT run cites private local task logs.
+because one run cites private local task logs. The checked totals below are a reviewed
+historical aggregate, not independently reproducible proof from the public checkout.
 
 ## Result
 
