@@ -34,6 +34,11 @@ const MAX_LANGUAGE_LENGTH: usize = 64;
 const DEFAULT_STAGE_TIMEOUT: Duration = Duration::from_secs(90);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const PASSAGE_TARGET_MS: u64 = 30_000;
+// JSON3 cue edges can drift slightly from yt-dlp's source duration. Live release
+// fixtures included an end overrun of 1.68 seconds, so two seconds is the narrow
+// measured tolerance: starts remain unchanged, ends within it are clamped, and
+// larger overruns are rejected rather than broadening claimed coverage.
+const CAPTION_EDGE_TOLERANCE_MS: u64 = 2_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderFailureKind {
@@ -306,9 +311,9 @@ impl YtDlpProvider {
             control,
         )?;
         let caption_path = find_caption_artifact(workspace)?;
-        let caption_bytes = read_limited(&caption_path, MAX_CAPTION_BYTES, "caption output")?;
-        let cues = parse_json3_passages(&caption_bytes)?;
         let duration_ms = duration_ms(metadata.duration)?;
+        let caption_bytes = read_limited(&caption_path, MAX_CAPTION_BYTES, "caption output")?;
+        let captions = parse_json3_passages(&caption_bytes, duration_ms)?;
         let caption_provenance = selected.provenance();
         let creator = metadata
             .channel
@@ -327,12 +332,12 @@ impl YtDlpProvider {
                 language: selected.language,
                 captions: caption_provenance,
             },
-            cues,
+            cues: captions.cues,
             coverage: Coverage {
                 metadata: true,
-                transcript_start_ms: 0,
-                transcript_end_ms: duration_ms,
-                transcript_complete: true,
+                transcript_start_ms: captions.start_ms,
+                transcript_end_ms: captions.end_ms,
+                transcript_complete: captions.complete,
                 visuals_processed: false,
             },
             acquisition: AcquisitionProvenance {
@@ -677,9 +682,56 @@ fn duration_ms(duration: Option<f64>) -> Result<u64, ProviderError> {
         .map_err(|_| ProviderError::InvalidMetadata("duration is too large"))
 }
 
-/// Parses JSON3 captions and normalises rolling caption fragments into passages.
-fn parse_json3_passages(input: &[u8]) -> Result<Vec<AcquiredCue>, ProviderError> {
-    Ok(segment_cues(parse_json3(input)?, PASSAGE_TARGET_MS))
+#[derive(Debug)]
+struct ValidatedCaptions {
+    cues: Vec<AcquiredCue>,
+    start_ms: u64,
+    end_ms: u64,
+    complete: bool,
+}
+
+/// Parses JSON3 captions, validates their source bounds and normalises rolling fragments.
+fn parse_json3_passages(
+    input: &[u8],
+    source_duration_ms: u64,
+) -> Result<ValidatedCaptions, ProviderError> {
+    let mut cues = parse_json3(input)?;
+    let mut previous_start = None;
+    let mut transcript_end_ms = 0;
+
+    for cue in &mut cues {
+        if previous_start.is_some_and(|start| cue.start_ms < start) {
+            return Err(ProviderError::InvalidCaptions("are out of source order"));
+        }
+        if cue.start_ms >= source_duration_ms {
+            return Err(ProviderError::InvalidCaptions(
+                "contain text outside the source duration",
+            ));
+        }
+        if cue.end_ms > source_duration_ms {
+            let drift_ms = cue.end_ms - source_duration_ms;
+            if drift_ms > CAPTION_EDGE_TOLERANCE_MS {
+                return Err(ProviderError::InvalidCaptions(
+                    "extend beyond the source duration",
+                ));
+            }
+            cue.end_ms = source_duration_ms;
+        }
+        previous_start = Some(cue.start_ms);
+        transcript_end_ms = transcript_end_ms.max(cue.end_ms);
+    }
+
+    let transcript_start_ms = cues
+        .first()
+        .map(|cue| cue.start_ms)
+        .ok_or(ProviderError::InvalidCaptions("contain no text evidence"))?;
+    Ok(ValidatedCaptions {
+        cues: segment_cues(cues, PASSAGE_TARGET_MS),
+        start_ms: transcript_start_ms,
+        end_ms: transcript_end_ms,
+        complete: transcript_start_ms <= CAPTION_EDGE_TOLERANCE_MS
+            && transcript_end_ms == source_duration_ms,
+    })
 }
 
 fn parse_json3(input: &[u8]) -> Result<Vec<AcquiredCue>, ProviderError> {
@@ -918,15 +970,17 @@ mod tests {
 
     #[test]
     fn rolling_caption_fragments_become_readable_passages() {
-        let passages = parse_json3_passages(
+        let captions = parse_json3_passages(
             br#"{"events":[
                 {"tStartMs":0,"dDurationMs":12000,"segs":[{"utf8":"There's a deceptively simple problem"}]},
                 {"tStartMs":10000,"dDurationMs":12000,"segs":[{"utf8":"that's tormented mathematicians for 50"}]},
                 {"tStartMs":20000,"dDurationMs":12000,"segs":[{"utf8":"years. Suppose you have a needle."}]},
                 {"tStartMs":30000,"dDurationMs":12000,"segs":[{"utf8":"What's the smallest area you can sweep?"}]}
             ]}"#,
+            42_000,
         )
         .expect("captions should parse");
+        let passages = captions.cues;
 
         assert_eq!(passages.len(), 2);
         assert_eq!(passages[0].start_ms, 0);
@@ -938,6 +992,69 @@ years. Suppose you have a needle."
         );
         assert_eq!(passages[1].start_ms, 30_000);
         assert_eq!(passages[1].text, "What's the smallest area you can sweep?");
+        assert_eq!(captions.start_ms, 0);
+        assert_eq!(captions.end_ms, 42_000);
+        assert!(captions.complete);
+    }
+
+    #[test]
+    fn partial_caption_coverage_uses_the_actual_cue_span() {
+        let captions = parse_json3_passages(
+            br#"{"events":[
+                {"tStartMs":1000,"dDurationMs":2000,"segs":[{"utf8":"middle"}]},
+                {"tStartMs":5000,"dDurationMs":1000,"segs":[{"utf8":"only"}]}
+            ]}"#,
+            10_000,
+        )
+        .expect("partial captions should remain usable");
+
+        assert_eq!(captions.start_ms, 1_000);
+        assert_eq!(captions.end_ms, 6_000);
+        assert!(!captions.complete);
+    }
+
+    #[test]
+    fn out_of_order_caption_cues_are_rejected() {
+        let error = parse_json3_passages(
+            br#"{"events":[
+                {"tStartMs":5000,"dDurationMs":1000,"segs":[{"utf8":"later"}]},
+                {"tStartMs":1000,"dDurationMs":1000,"segs":[{"utf8":"earlier"}]}
+            ]}"#,
+            10_000,
+        )
+        .expect_err("out-of-order captions should be rejected");
+
+        assert!(matches!(
+            error,
+            ProviderError::InvalidCaptions("are out of source order")
+        ));
+    }
+
+    #[test]
+    fn slight_caption_end_drift_is_clamped_but_larger_overruns_are_rejected() {
+        let captions = parse_json3_passages(
+            br#"{"events":[
+                {"tStartMs":1280,"dDurationMs":10400,"segs":[{"utf8":"bounded drift"}]}
+            ]}"#,
+            10_000,
+        )
+        .expect("measured edge drift should be clamped");
+        assert_eq!(captions.start_ms, 1_280);
+        assert_eq!(captions.end_ms, 10_000);
+        assert_eq!(captions.cues[0].end_ms, 10_000);
+        assert!(captions.complete);
+
+        let error = parse_json3_passages(
+            br#"{"events":[
+                {"tStartMs":0,"dDurationMs":12001,"segs":[{"utf8":"too far"}]}
+            ]}"#,
+            10_000,
+        )
+        .expect_err("caption overruns beyond the tolerance should be rejected");
+        assert!(matches!(
+            error,
+            ProviderError::InvalidCaptions("extend beyond the source duration")
+        ));
     }
 
     #[test]
