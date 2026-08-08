@@ -8,7 +8,7 @@ Oriel turns long-form video into reusable, timestamp-grounded context. It should
 
 Read `status.md` before consequential work. And update after any work is done make it very lean, clear and effective.
 
-The specification freezes the mission, required qualities, success criteria and scope. It does not freeze implementation choices. Use current evidence and measurements to find the simplest effective architecture.
+The founding specification in `plans/spec1.md` freezes the mission, required qualities, success criteria and scope. It does not freeze implementation choices. Use current evidence and measurements to find the simplest effective architecture.
 
 ---
 
@@ -537,7 +537,7 @@ Never present a debug-build timing as a product benchmark.
 
 ## Scope control
 
-Do not add any of the following unless `SPEC.md` changes or measured product use demands it:
+Do not add any of the following unless `plans/spec1.md` changes or measured product use demands it:
 
 * accounts;
 * teams;
@@ -636,7 +636,7 @@ Use temporary directories and isolated test data by default.
 
 Keep documentation useful and current.
 
-### `SPEC.md`
+### `plans/spec1.md`
 
 Authoritative product and engineering contract.
 
