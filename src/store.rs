@@ -83,8 +83,9 @@ impl FileSourceStore {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when a pointer, file, schema or compiled evidence
-    /// record fails validation.
+    /// Returns [`StoreError`] when a pointer, file, future schema or compiled
+    /// evidence record fails validation. Known legacy entries are treated as a
+    /// cache miss so the provider can reacquire them.
     pub fn load_latest(
         &self,
         source: &CanonicalSource,
@@ -111,8 +112,10 @@ impl FileSourceStore {
         let stored_bytes = read_limited(&version_path, MAX_SOURCE_BYTES)?;
         let stored: StoredSource =
             serde_json::from_slice(&stored_bytes).map_err(|_| StoreError::InvalidStoredSource)?;
-        if stored.schema_version != STORE_SCHEMA_VERSION {
-            return Err(StoreError::UnsupportedSchema(stored.schema_version));
+        match stored.schema_version {
+            STORE_SCHEMA_VERSION => {}
+            1 => return Ok(None),
+            version => return Err(StoreError::UnsupportedSchema(version)),
         }
         verify_stored(&stored.compiled, source, language, digest)?;
         Ok(Some(stored.compiled))
@@ -139,17 +142,24 @@ impl FileSourceStore {
         create_private_directory(&tracks_dir)?;
 
         let version_path = versions_dir.join(format!("{digest}.json"));
-        let outcome = if version_path.exists() {
-            let existing = read_limited(&version_path, MAX_SOURCE_BYTES)?;
-            let stored: StoredSource =
-                serde_json::from_slice(&existing).map_err(|_| StoreError::InvalidStoredSource)?;
-            if stored.compiled != *compiled || stored.schema_version != STORE_SCHEMA_VERSION {
-                return Err(StoreError::InvalidStoredSource);
+        let outcome = match read_stored_source(&version_path) {
+            Ok(stored) => match stored.schema_version {
+                STORE_SCHEMA_VERSION if stored.compiled == *compiled => SaveOutcome::ReusedVersion,
+                STORE_SCHEMA_VERSION => return Err(StoreError::InvalidStoredSource),
+                // Replacing an identical legacy payload only changes its storage wrapper. A
+                // legacy payload with different evidence must never be allowed to take over the
+                // same immutable source-version path.
+                1 if stored.compiled == *compiled => {
+                    replace_version(&versions_dir, &version_path, compiled)?;
+                    SaveOutcome::NewVersion
+                }
+                1 => return Err(StoreError::InvalidStoredSource),
+                version => return Err(StoreError::UnsupportedSchema(version)),
+            },
+            Err(StoreError::Io { error, .. }) if error.kind() == io::ErrorKind::NotFound => {
+                write_new_version(&versions_dir, &version_path, compiled)?
             }
-            SaveOutcome::ReusedVersion
-        } else {
-            write_version(&versions_dir, &version_path, compiled)?;
-            SaveOutcome::NewVersion
+            Err(error) => return Err(error),
         };
 
         let language_key = pointer_key(Some(&compiled.evidence[0].transcript.language))?;
@@ -188,11 +198,46 @@ fn verify_stored(
     Ok(())
 }
 
-fn write_version(
+fn read_stored_source(path: &Path) -> Result<StoredSource, StoreError> {
+    let bytes = read_limited(path, MAX_SOURCE_BYTES)?;
+    serde_json::from_slice(&bytes).map_err(|_| StoreError::InvalidStoredSource)
+}
+
+fn write_new_version(
+    directory: &Path,
+    destination: &Path,
+    compiled: &CompiledSource,
+) -> Result<SaveOutcome, StoreError> {
+    let temporary = serialise_version(directory, compiled)?;
+    match temporary.persist_noclobber(destination) {
+        Ok(_) => Ok(SaveOutcome::NewVersion),
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+            let winner = read_stored_source(destination)?;
+            if winner.schema_version == STORE_SCHEMA_VERSION && winner.compiled == *compiled {
+                Ok(SaveOutcome::ReusedVersion)
+            } else {
+                Err(StoreError::InvalidStoredSource)
+            }
+        }
+        Err(_) => Err(StoreError::Persist("version")),
+    }
+}
+
+fn replace_version(
     directory: &Path,
     destination: &Path,
     compiled: &CompiledSource,
 ) -> Result<(), StoreError> {
+    serialise_version(directory, compiled)?
+        .persist(destination)
+        .map_err(|_| StoreError::Persist("version"))?;
+    Ok(())
+}
+
+fn serialise_version(
+    directory: &Path,
+    compiled: &CompiledSource,
+) -> Result<NamedTempFile, StoreError> {
     let mut temporary = NamedTempFile::new_in(directory).map_err(|error| StoreError::Io {
         stage: "creating cache version",
         error,
@@ -219,10 +264,7 @@ fn write_version(
             stage: "syncing cache version",
             error,
         })?;
-    temporary
-        .persist_noclobber(destination)
-        .map_err(|_| StoreError::Persist("version"))?;
-    Ok(())
+    Ok(temporary)
 }
 
 fn write_pointer(directory: &Path, key: &str, digest: &str) -> Result<(), StoreError> {
@@ -312,13 +354,19 @@ fn is_digest(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::{Arc, Barrier},
+        thread,
+    };
 
+    use serde_json::{Value, json};
     use tempfile::tempdir;
 
     use crate::fixture::compile_fixture;
 
-    use super::{FileSourceStore, SaveOutcome, StoreError};
+    use super::{FileSourceStore, SaveOutcome, StoreError, version_digest};
 
     const FIXTURE: &str = "schema_version\t1\n\
 source_url\thttps://youtu.be/dQw4w9WgXcQ\n\
@@ -385,5 +433,137 @@ cue\t0\t10000\tImmutable timestamped evidence.\n";
             store.load_latest(&compiled.source, Some("en")),
             Err(StoreError::InvalidPointer)
         ));
+    }
+
+    #[test]
+    fn a_known_legacy_schema_is_reacquired_and_upgraded() {
+        let directory = tempdir().expect("temporary cache should exist");
+        let store = FileSourceStore::new(directory.path());
+        let compiled = compile_fixture(FIXTURE).expect("fixture should compile");
+        store.save(&compiled, true).expect("source should save");
+        let version = version_path(directory.path(), &compiled.source_version);
+        set_schema_version(&version, 1);
+
+        assert_eq!(
+            store
+                .load_latest(&compiled.source, Some("en"))
+                .expect("legacy cache should request reacquisition"),
+            None
+        );
+        assert_eq!(
+            store
+                .save(&compiled, true)
+                .expect("reacquired source should upgrade the legacy entry"),
+            SaveOutcome::NewVersion
+        );
+        assert_eq!(
+            store
+                .load_latest(&compiled.source, Some("en"))
+                .expect("upgraded source should load"),
+            Some(compiled)
+        );
+    }
+
+    #[test]
+    fn an_unknown_future_schema_remains_fail_closed() {
+        let directory = tempdir().expect("temporary cache should exist");
+        let store = FileSourceStore::new(directory.path());
+        let compiled = compile_fixture(FIXTURE).expect("fixture should compile");
+        store.save(&compiled, true).expect("source should save");
+        let version = version_path(directory.path(), &compiled.source_version);
+        set_schema_version(&version, 3);
+
+        assert!(matches!(
+            store.load_latest(&compiled.source, Some("en")),
+            Err(StoreError::UnsupportedSchema(3))
+        ));
+        assert!(matches!(
+            store.save(&compiled, true),
+            Err(StoreError::UnsupportedSchema(3))
+        ));
+    }
+
+    #[test]
+    fn concurrent_identical_writes_reuse_the_immutable_winner() {
+        let directory = tempdir().expect("temporary cache should exist");
+        let store = Arc::new(FileSourceStore::new(directory.path()));
+        let compiled = Arc::new(compile_fixture(FIXTURE).expect("fixture should compile"));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+
+        for _ in 0..2 {
+            let store = Arc::clone(&store);
+            let compiled = Arc::clone(&compiled);
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                store.save(&compiled, true)
+            }));
+        }
+        barrier.wait();
+
+        let outcomes = workers
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .expect("cache writer should not panic")
+                    .expect("identical cache writer should succeed")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == SaveOutcome::NewVersion)
+                .count(),
+            1
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == SaveOutcome::ReusedVersion)
+                .count(),
+            1
+        );
+        assert_eq!(
+            store
+                .load_latest(&compiled.source, Some("en"))
+                .expect("winning source should load"),
+            Some((*compiled).clone())
+        );
+    }
+
+    #[test]
+    fn an_inconsistent_immutable_destination_is_rejected() {
+        let directory = tempdir().expect("temporary cache should exist");
+        let store = FileSourceStore::new(directory.path());
+        let compiled = compile_fixture(FIXTURE).expect("fixture should compile");
+        store.save(&compiled, true).expect("source should save");
+        let mut inconsistent = compiled;
+        inconsistent.acquisition.adapter = "different-adapter".to_owned();
+
+        assert!(matches!(
+            store.save(&inconsistent, true),
+            Err(StoreError::InvalidStoredSource)
+        ));
+    }
+
+    fn version_path(root: &Path, source_version: &str) -> PathBuf {
+        let digest = version_digest(source_version).expect("fixture version should have a digest");
+        root.join("youtube/dQw4w9WgXcQ/versions")
+            .join(format!("{digest}.json"))
+    }
+
+    fn set_schema_version(path: &Path, schema_version: u32) {
+        let mut stored: Value = serde_json::from_slice(
+            &fs::read(path).expect("stored source should be readable for test setup"),
+        )
+        .expect("stored source should be valid JSON");
+        stored["schema_version"] = json!(schema_version);
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&stored).expect("stored source should serialise"),
+        )
+        .expect("stored source should be writable for test setup");
     }
 }
