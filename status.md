@@ -44,9 +44,9 @@ preparation.
 - Contribution, conduct and security policies are present.
 - GitHub CI has read-only permissions, fetches the locked dependency set once, then runs
   formatting, strict Clippy and tests offline.
-- Public evaluation scripts no longer contain machine-specific paths or silently inspect
-  founder task logs. Private context requires an explicit option; raw streams, answers
-  and diagnostics remain ignored.
+- Public evaluation scripts no longer contain machine-specific paths. The runner that
+  previously depended on founder task logs is not distributed; raw streams, answers and
+  diagnostics remain ignored.
 - The current RustSec audit reports zero vulnerabilities or warnings. All 92 locked
   packages declare licences with a permissive path.
 - `Cargo.toml` remains `publish = false`. Opening the source repository does not imply a
