@@ -36,16 +36,15 @@ The tool-choice trial also requires an unrelated repository that the agent may i
 python3 evals/trial/run.py --repo /path/to/an/unrelated/repository
 ```
 
-The whole-source runner can repeat the source-only questions without private context:
+The whole-source runner is intentionally not distributed. Two frozen GPT questions
+depended on the founder's private task history, and a general-purpose calling agent's
+read-only mode does not confine which local files it may inspect. The committed questions
+and reviewed report preserve the historical method without publishing a script that could
+misrepresent prompt instructions as a filesystem privacy boundary.
 
-```sh
-python3 evals/usecase-v1/run_codex.py
-```
-
-Two frozen GPT questions refer to the founder's own task history. Without
-`--private-context-dir`, the runner tells the agent to mark those questions as not run.
-Supplying that option is an explicit decision to expose exactly that directory to the
-read-only calling agent; it is never necessary for public use or public claims.
+The retained tool-choice runner deliberately lets an external agent read the repository
+passed through `--repo`. Run it only against a disposable, non-sensitive checkout. Source
+text and agent behaviour are untrusted; read-only access prevents writes, not disclosure.
 
 Raw agent streams, answers, summaries, caches and diagnostics can include private
 repository or task context. They stay ignored by Git. Do not force-add them. Public
