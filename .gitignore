@@ -1,6 +1,7 @@
 /target/
 .oriel-cache/
 .oriel-session
+/.oriel-local/
 .DS_Store
 
 # Agent evaluations can capture prompts, answers, private repository context and

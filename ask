@@ -7,14 +7,14 @@
 #   ./ask --miss 12:34                           it was wrong; the answer is at 12:34
 #   ./ask --read                                 print the whole thing, timestamped
 #
-# Every question and verdict is appended to evals/session-log.tsv.
+# Every question and verdict is appended to .oriel-local/session-log.tsv.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 BIN=target/release/oriel
 CURRENT=.oriel-session
-LOG=evals/session-log.tsv
+LOG=.oriel-local/session-log.tsv
 CACHE=.oriel-cache
 
 usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
@@ -24,7 +24,7 @@ if [ ! -x "$BIN" ]; then
   cargo build --release --offline >&2
 fi
 
-mkdir -p evals
+mkdir -p "$(dirname "$LOG")"
 if [ ! -f "$LOG" ]; then
   printf 'video_id\tquestion\treturned_start_ms\tverdict\tcorrect_start_ms\n' > "$LOG"
 fi

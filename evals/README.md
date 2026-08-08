@@ -9,8 +9,10 @@ network, account or private artefact.
 
 ## Frozen live-source retrieval corpus
 
-`session-log.tsv` is a frozen set of natural questions and human verdicts. It can be
-replayed against an existing local cache with:
+`session-log.tsv` is a frozen set of natural questions and human verdicts. The interactive
+`./ask` harness writes new questions to the ignored `.oriel-local/session-log.tsv` instead
+of changing this corpus. The frozen corpus can be replayed against an existing local
+cache with:
 
 ```sh
 cargo build --release
@@ -36,11 +38,11 @@ The tool-choice trial also requires an unrelated repository that the agent may i
 python3 evals/trial/run.py --repo /path/to/an/unrelated/repository
 ```
 
-The whole-source runner is intentionally not distributed. Two frozen GPT questions
-depended on the founder's private task history, and a general-purpose calling agent's
-read-only mode does not confine which local files it may inspect. The committed questions
-and reviewed report preserve the historical method without publishing a script that could
-misrepresent prompt instructions as a filesystem privacy boundary.
+The whole-source runner is intentionally not distributed. Some frozen questions depended
+on private task history, and a general-purpose calling agent's read-only mode does not
+confine which local files it may inspect. The committed questions and reviewed aggregate
+report preserve the historical method without publishing a script that could misrepresent
+prompt instructions as a filesystem privacy boundary.
 
 The retained tool-choice runner deliberately lets an external agent read the repository
 passed through `--repo`. Run it only against a disposable, non-sensitive checkout. Source
