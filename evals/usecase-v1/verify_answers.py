@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify coverage and timestamp integrity of the three use-case answers."""
 
 from __future__ import annotations
@@ -7,7 +6,6 @@ import csv
 import json
 import re
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 EVAL_DIR = ROOT / "evals" / "usecase-v1"
@@ -36,7 +34,9 @@ def label_seconds(label: str) -> int:
 def source_starts(video_id: str) -> set[int]:
     versions = list((CACHE / video_id / "versions").glob("*.json"))
     if len(versions) != 1:
-        raise AssertionError(f"expected one cached version for {video_id}, found {len(versions)}")
+        raise AssertionError(
+            f"expected one cached version for {video_id}, found {len(versions)}"
+        )
     cached = json.loads(versions[0].read_text())
     return {
         int(evidence["start_ms"]) // 1_000
@@ -106,7 +106,9 @@ def main() -> int:
             f"{video_citations}/{video_citations} timestamps valid"
         )
 
-    print(f"total: {len(questions)}/{len(questions)} questions, {total_citations} valid timestamps")
+    print(
+        f"total: {len(questions)}/{len(questions)} questions, {total_citations} valid timestamps"
+    )
     if missing_citations:
         print(f"questions without a source timestamp: {', '.join(missing_citations)}")
         return 1
