@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 description = "A local-first source-intelligence engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aad1dash/Oriel"
+readme = "README.md"
+keywords = ["youtube", "captions", "mcp", "retrieval", "source-intelligence"]
+categories = ["command-line-utilities", "text-processing"]
 publish = false
 
 [dependencies]
