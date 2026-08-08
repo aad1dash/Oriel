@@ -1,6 +1,6 @@
 # Status
 
-**2026-08-08 — PUBLIC RELEASE CANDIDATE: final audit repairs verified locally**
+**2026-08-08 — PUBLIC v0.1.0: open-source release**
 
 ## Current position
 
@@ -10,9 +10,9 @@ Oriel is a working v0.1 local-first evidence engine:
 YouTube URL → captions → timestamped local evidence → calling agent judgement
 ```
 
-It is ready to be presented publicly with that narrow claim. The final audit findings have
-been addressed and the complete local gate passes. The branch has not been pushed and the
-GitHub repository remains private.
+It is publicly available with that narrow claim. The final audit findings are addressed,
+the complete local and hosted Linux gates pass, private vulnerability reporting is enabled,
+and the documented source install succeeds from a clean public clone.
 
 ## What is proven
 
@@ -54,9 +54,9 @@ GitHub repository remains private.
   work telemetry have been removed from the public evaluation report.
 - The current RustSec audit reports zero vulnerabilities or warnings. All 92 locked
   packages declare licences with a permissive path.
-- The intended public branch preserves all development commits while replacing the three
-  machine-specific paths that appeared in private `main` history. Its final tree and
-  commit messages match the reviewed release candidate.
+- Public `main` preserves the development sequence while excluding the machine-specific
+  paths and private evaluation material that appeared in private history. Every reachable
+  commit uses Aadi's GitHub noreply identity.
 - `Cargo.toml` remains `publish = false`. Opening the source repository does not imply a
   crates.io release.
 
@@ -73,18 +73,14 @@ GitHub repository remains private.
   live acquisition and Windows live acquisition remain unmeasured.
 - There is no web application, hosted service, account system or remote MCP transport.
 
-## Release gate
+## Release state
 
-The audit repairs and complete local gate pass. The remaining release sequence is:
-
-1. review `codex/open-source-readiness`;
-2. while the repository is private, replace remote `main` with this sanitised history
-   using an explicitly authorised force-with-lease push;
-3. require the new GitHub CI check to pass on the replacement `main`;
-4. set the repository description and topics;
-5. make the GitHub repository public;
-6. immediately enable private vulnerability reporting;
-7. verify a clean public clone and the documented install path.
+- GitHub `main` contains only the reviewed, sanitised history.
+- Hosted Linux CI passes on the public release commit.
+- The repository description and topics describe the narrow engine honestly.
+- Private vulnerability reporting is enabled.
+- An unauthenticated HTTPS clone installs successfully with `cargo install --path . --locked`.
+- The `v0.1.0` tag identifies the first public release.
 
 Further retrieval, provider, visual or interface work is follow-up development. None is
 required to publish Oriel honestly as the early local-first engine described above.
