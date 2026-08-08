@@ -49,6 +49,9 @@ preparation.
   diagnostics remain ignored.
 - The current RustSec audit reports zero vulnerabilities or warnings. All 92 locked
   packages declare licences with a permissive path.
+- The intended public branch preserves all development commits while replacing the three
+  machine-specific paths that appeared in private `main` history. Its final tree and
+  commit messages match the reviewed release candidate.
 - `Cargo.toml` remains `publish = false`. Opening the source repository does not imply a
   crates.io release.
 
@@ -69,9 +72,10 @@ preparation.
 
 The product and repository are locally ready. The remaining release sequence is:
 
-1. review and push `codex/open-source-readiness`;
-2. require the new GitHub CI check to pass;
-3. merge the reviewed branch into `main`;
+1. review `codex/open-source-readiness`;
+2. while the repository is private, replace remote `main` with this sanitised history
+   using an explicitly authorised force-with-lease push;
+3. require the new GitHub CI check to pass on the replacement `main`;
 4. enable private vulnerability reporting and set the repository description/topics;
 5. make the GitHub repository public;
 6. verify a clean public clone and the documented install path.
